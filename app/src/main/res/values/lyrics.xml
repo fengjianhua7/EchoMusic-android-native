@@ -1,0 +1,6 @@
+<resources>
+    <string name="lyric_status">%1$s%2$s</string>
+    <string name="lyric_offset">时间校准：%1$dms（正值延后）</string>
+    <string name="lyric_font">字号：%1$d</string>
+    <string name="player_time">%1$s / %2$s</string>
+</resources>

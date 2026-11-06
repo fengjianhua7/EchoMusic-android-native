@@ -1,0 +1,25 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="er_connection_lost">连接中断，请检查电脑和 Wi-Fi</string>
+    <string name="er_lyric_waiting">此刻的音乐，在这里同步</string>
+    <string name="er_floating_title">Echo 桌面歌词</string>
+    <string name="er_floating_locked">歌词已锁定，触摸穿透 · 从此通知解锁</string>
+    <string name="er_floating_unlocked">轻触展开操作 · 拖动调整位置</string>
+    <string name="er_unlock_lyrics">解锁歌词</string><string name="er_lock_lyrics">锁定歌词</string>
+    <string name="er_close_lyrics">关闭歌词</string>
+    <string name="er_remote_title">Echo 电脑音乐</string>
+    <string name="er_remote_waiting">等待电脑播放</string>
+    <string name="er_desktop_output">声音由电脑播放</string>
+    <string name="er_previous">上一首</string><string name="er_next">下一首</string>
+    <string name="er_play">播放</string><string name="er_pause">暂停</string>
+    <string name="er_pause_and_close">暂停并关闭</string><string name="er_disconnect">仅关闭遥控</string>
+    <string name="er_notification_disconnected">电脑已断开，正在重连；可仅关闭遥控</string>
+    <string name="er_closing_playback">正在暂停电脑并关闭遥控…</string>
+    <string name="er_close_failed">暂停失败，请检查连接后重试，或仅关闭遥控</string>
+    <string name="er_control_failed">控制失败，请检查电脑和 Wi-Fi</string>
+    <string name="er_music_volume">音乐音量  %1$d%%</string>
+    <string name="er_volume_percent">%1$d%%</string>
+    <string name="er_ktv_delay">电脑伴奏延迟  %1$d ms</string>
+    <string name="er_ktv_pc_volume">电脑伴奏音量  %1$d%%</string>
+    <string name="er_ktv_mic_gain">电脑人声音量 %1$d%%</string>
+</resources>

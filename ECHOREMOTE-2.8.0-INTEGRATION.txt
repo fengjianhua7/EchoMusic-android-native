@@ -1,0 +1,2 @@
+EchoRemote Android 2.8.0 integrated from user supplied source archive. Original Java package retained; Android resources prefixed er_ and host R imported. TV source sets exclude this integration. Archive SHA256: 57743f320640c629b4014ce99e98ed922b6d25b48fe8ab77102408232658e870
+Upstream: https://github.com/yuanqian108/echo-remote

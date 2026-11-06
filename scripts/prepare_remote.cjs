@@ -1,0 +1,10 @@
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
+const root=path.resolve(__dirname,'../..');
+const source=fs.readFileSync(path.join(root,'remote-reference/index.js'),'utf8');
+const start=source.indexOf('function buildPage() {'),end=source.indexOf('// ---------------- 设置面板',start);
+let html=vm.runInNewContext(source.slice(start,end)+';buildPage()');
+html=html.replace('function wsConnect(){','function wsConnect(){return;').replace('function wsConnect() {','function wsConnect() {return;').replace("var qs='';","var qs='';if(location.search)history.replaceState(null,'',location.pathname);");
+html=html.replace('<!doctype html>','<!doctype html>\n<!-- EchoRemote WebUI by yuanqian, lm379; upstream README declares MIT. https://github.com/yuanqian108/echo-remote ; Android adapter details: THIRD_PARTY_REMOTE.md -->');
+const target=path.join(root,'android-native/app/src/main/assets/remote');fs.mkdirSync(target,{recursive:true});fs.writeFileSync(path.join(target,'index.html'),html);
+const notices=path.join(root,'android-native/app/src/main/assets/licenses/echo-remote');fs.mkdirSync(notices,{recursive:true});fs.copyFileSync(path.join(root,'remote-reference/README.md'),path.join(notices,'README.md'));fs.copyFileSync(path.join(root,'android-native/THIRD_PARTY_REMOTE.md'),path.join(notices,'NOTICE.md'));
+console.log('Prepared attributed EchoRemote browser interface:',Buffer.byteLength(html),'bytes');

@@ -1,0 +1,166 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace 'cc.echomusic.android'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'cc.echomusic.android'
+        minSdk 26
+        targetSdk 35
+        buildConfigField 'boolean', 'NODE_MOBILE', 'false'
+        versionCode 18
+        versionName '0.10.5-android'
+    }
+    buildFeatures { buildConfig true }
+    signingConfigs { handheldOriginal { initWith debug; def originalKey = new File(System.getProperty('user.home'), '.android/debug.keystore'); if(originalKey.exists()) storeFile originalKey } }
+    flavorDimensions 'device'
+    productFlavors {
+        handheld { signingConfig signingConfigs.handheldOriginal; versionCode 23; versionName '0.11.6-android'; dimension 'device'; buildConfigField 'boolean', 'TV', 'false'; ndk { abiFilters 'arm64-v8a', 'x86_64' } }
+        tv32 { minSdk 23; dimension 'device'; applicationIdSuffix '.tv'; versionNameSuffix '-tv-armv7'; buildConfigField 'boolean', 'TV', 'true'; buildConfigField 'boolean', 'NODE_MOBILE', 'true'; ndk { abiFilters 'armeabi-v7a' } }
+        tv { dimension 'device'; applicationIdSuffix '.tv'; versionNameSuffix '-tv'; buildConfigField 'boolean', 'TV', 'true'; ndk { abiFilters 'arm64-v8a' } }
+    }
+    sourceSets { tv32 { manifest.srcFile 'src/tv32/AndroidManifest.xml'; res.srcDirs = ['src/tv/res'] } }
+    buildTypes {
+        tvOptimized { initWith debug; debuggable false; signingConfig signingConfigs.debug; minifyEnabled true; shrinkResources true; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-tv.pro'; matchingFallbacks=['debug'] }
+    }
+    packaging { jniLibs { useLegacyPackaging = true } }
+    compileOptions { coreLibraryDesugaringEnabled true; sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+}
+
+
+// Host-side timing tests: no emulator or additional test dependencies required.
+tasks.register('compileLyricsContract', JavaCompile) {
+    source 'src/main/java/cc/echomusic/android/Lyrics.java', '../tests/LyricsContractTest.java'
+    classpath = files('../tests/lib/json-20240303.jar')
+    destinationDirectory = layout.buildDirectory.dir('lyrics-contract')
+    options.encoding = 'UTF-8'
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+}
+tasks.register('lyricsContractTest', JavaExec) {
+    dependsOn 'compileLyricsContract'
+    classpath = files(layout.buildDirectory.dir('lyrics-contract'), '../tests/lib/json-20240303.jar')
+    mainClass = 'cc.echomusic.android.LyricsContractTest'
+}
+
+// The JSON library is used only by host-side tests. Android provides org.json at runtime.
+tasks.register('compileAuthContract', JavaCompile) {
+    source 'src/main/java/cc/echomusic/android/AuthProtocol.java', 'src/main/java/cc/echomusic/android/AuthRequestRunner.java', '../tests/AuthContractTest.java'
+    classpath = files('../tests/lib/json-20240303.jar')
+    destinationDirectory = layout.buildDirectory.dir('auth-contract')
+    options.encoding = 'UTF-8'
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+}
+tasks.register('authContractTest', JavaExec) {
+    dependsOn 'compileAuthContract'
+    classpath = files(layout.buildDirectory.dir('auth-contract'), '../tests/lib/json-20240303.jar')
+    mainClass = 'cc.echomusic.android.AuthContractTest'
+}
+
+
+dependencies {
+    handheldImplementation files('libs/javet-node-android-6.0.2.aar')
+    tvImplementation files('libs/javet-node-android-6.0.2.aar')
+    tv32CompileOnly files('libs/javet-compile-only.jar')
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
+}
+
+tasks.register('verifyEmbeddedBundle') {
+    inputs.files('src/main/node/bootstrap.cjs', 'src/main/assets/echo-api.zip', 'src/main/assets/embedded-api.json')
+    doLast {
+        def archive = file('src/main/assets/echo-api.zip')
+        def manifest = new groovy.json.JsonSlurper().parse(file('src/main/assets/embedded-api.json'))
+        def digest = java.security.MessageDigest.getInstance('SHA-256').digest(archive.bytes).encodeHex().toString()
+        if (digest != manifest.sha256) throw new GradleException('Bundled API checksum mismatch. Run scripts/prepare_embedded.py.')
+        new java.util.zip.ZipFile(archive).withCloseable { zip ->
+            def bundled = zip.getInputStream(zip.getEntry('bootstrap.cjs')).bytes
+            if (!java.util.Arrays.equals(bundled, file('src/main/node/bootstrap.cjs').bytes)) throw new GradleException('Bundled API is stale. Run scripts/prepare_embedded.py.')
+            if (zip.getEntry('node_modules/axios/package.json') == null) throw new GradleException('Bundled API dependencies are missing.')
+        }
+    }
+}
+tasks.named('preBuild').configure { dependsOn 'verifyEmbeddedBundle' }
+
+tasks.register('compileCloudContract', JavaCompile) {
+    source 'src/main/java/cc/echomusic/android/CloudProtocol.java', 'src/main/java/cc/echomusic/android/CloudLibrary.java', 'src/main/java/cc/echomusic/android/Song.java', 'src/main/java/cc/echomusic/android/AuthProtocol.java', '../tests/CloudContractTest.java'
+    classpath = files('../tests/lib/json-20240303.jar')
+    destinationDirectory = layout.buildDirectory.dir('cloud-contract')
+    options.encoding = 'UTF-8'
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+}
+tasks.register('cloudContractTest', JavaExec) {
+    dependsOn 'compileCloudContract'
+    classpath = files(layout.buildDirectory.dir('cloud-contract'), '../tests/lib/json-20240303.jar')
+    mainClass = 'cc.echomusic.android.CloudContractTest'
+}
+tasks.register('compileQueueContract', JavaCompile) {
+    source 'src/main/java/cc/echomusic/android/PlaybackQueue.java', '../tests/QueueContractTest.java'
+    classpath = files()
+    destinationDirectory = layout.buildDirectory.dir('queue-contract')
+    options.encoding = 'UTF-8'
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+}
+tasks.register('queueContractTest', JavaExec) {
+    dependsOn 'compileQueueContract'
+    classpath = files(layout.buildDirectory.dir('queue-contract'))
+    mainClass = 'cc.echomusic.android.QueueContractTest'
+}
+
+tasks.register('compileDownloadContract', JavaCompile) {
+    source 'src/main/java/cc/echomusic/android/DownloadNames.java', '../tests/DownloadNamesTest.java'
+    classpath = files()
+    destinationDirectory = layout.buildDirectory.dir('download-contract')
+    options.encoding = 'UTF-8'
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+}
+tasks.register('downloadContractTest', JavaExec) {
+    dependsOn 'compileDownloadContract'
+    classpath = files(layout.buildDirectory.dir('download-contract'))
+    mainClass = 'cc.echomusic.android.DownloadNamesTest'
+}
+
+tasks.register('compileLyricWindowContract', JavaCompile) {
+    source 'src/main/java/cc/echomusic/android/LyricWindowState.java', '../tests/LyricWindowStateTest.java'
+    classpath = files()
+    destinationDirectory = layout.buildDirectory.dir('lyric-window-contract')
+    options.encoding = 'UTF-8'
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+}
+tasks.register('lyricWindowContractTest', JavaExec) {
+    dependsOn 'compileLyricWindowContract'
+    classpath = files(layout.buildDirectory.dir('lyric-window-contract'))
+    mainClass = 'cc.echomusic.android.LyricWindowStateTest'
+}
+
+tasks.register('compileLanContract', JavaCompile) {
+    source 'src/main/java/cc/echomusic/android/LanHttpServer.java', '../tests/LanHttpServerTest.java'
+    classpath = files()
+    destinationDirectory = layout.buildDirectory.dir('lan-contract')
+    options.encoding = 'UTF-8'
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+}
+tasks.register('lanContractTest', JavaExec) {
+    dependsOn 'compileLanContract'
+    classpath = files(layout.buildDirectory.dir('lan-contract'))
+    mainClass = 'cc.echomusic.android.LanHttpServerTest'
+}
+
+tasks.register('compileCompletionContract', JavaCompile) {
+    source 'src/main/java/cc/echomusic/android/Completion.java', '../tests/CompletionTest.java'
+    classpath = files()
+    destinationDirectory = layout.buildDirectory.dir('completion-contract')
+    options.encoding = 'UTF-8'
+    sourceCompatibility = '17'
+    targetCompatibility = '17'
+}
+tasks.register('completionContractTest', JavaExec) {
+    dependsOn 'compileCompletionContract'
+    classpath = files(layout.buildDirectory.dir('completion-contract'))
+    mainClass = 'cc.echomusic.android.CompletionTest'
+}

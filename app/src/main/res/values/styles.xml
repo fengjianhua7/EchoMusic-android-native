@@ -1,0 +1,20 @@
+<resources>
+    <style name="AppTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#07515D</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">#A5F2F3</item>
+        <item name="android:navigationBarColor">#A5F2F3</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">#A5F2F3</item>
+        <item name="android:windowSoftInputMode">adjustResize</item>
+    </style>
+    <style name="PlayerTheme" parent="AppTheme">
+        <item name="android:colorAccent">#07515D</item>
+        <item name="android:textColorPrimary">#102E35</item>
+        <item name="android:windowBackground">#213E52</item>
+        <item name="android:statusBarColor">#213E52</item>
+        <item name="android:navigationBarColor">#213E52</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>

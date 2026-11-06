@@ -1,0 +1,21 @@
+{
+  "source": "https://github.com/nodejs-mobile/nodejs-mobile/releases/tag/v18.20.4",
+  "archive_sha256": "bd7321eaa1a7602fbe0bb87302df2d79d87835cf4363fbdd17c350dbb485c2af",
+  "abi": "armeabi-v7a",
+  "runtime": "Node.js Mobile 18.20.4",
+  "libraries": {
+    "libc++_shared.so": "10ee48131d6742899619f7cfb3b8df150ad787d723c766a3fb80d4bb275711ff",
+    "libecho_compat.so": "29f3f686119bca668ca1682aafba5197d9b923c87683633140b9741797c4ab38",
+    "libecho_node.so": "61ca16ce3964e62433731ea575e25d95af8b44f72f8c429810dd5f9b9716caf0",
+    "libnode.so": "d7f97968c3afe3597715bf376d01b93ae3dc6987e571f2cc54dcafd8faf0a0a1"
+  },
+  "bridge_source_sha256": "c75c1c01a1bc9091e37a9258d461b63368600fb8a5ff964d853d248d1b5c495b",
+  "android_min_api": 23,
+  "original_node_sha256": "d60451f64718354b1a3d4857d20fbe56cc3a3dbe2c319c2911342aea2bbef92d",
+  "binary_modification": "Only six LIBC_N import version indices become global; obsolete LIBC_N verneed removed. See scripts/patch_node_api23.py. ARM instructions unchanged.",
+  "sources": {
+    "echo_api23.c": "ab5012a3e6b4f72989f3c03d8fa76f8519d589d0511d0168417ab53b159741f1",
+    "echo_barrier.h": "96077a921d4c668aa66f5e09ee9979de9e605cb48a50fed7475c8f73262350d6",
+    "echo_node.c": "9cb0aacec9791bddb56c8d7f9121868603e99488dfda4dd7a73a57a62f143161"
+  }
+}

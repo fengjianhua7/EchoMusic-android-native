@@ -1,0 +1,55 @@
+EchoMusic 0.10.0 TV / Android 验证记录
+日期：2026-10-27（Asia/Shanghai）
+
+双产品构建：assembleHandheldDebug / assembleTvTvOptimized 成功。
+双产品 lint：0 errors / 0 warnings。
+TV：Android 8.0+，独立包名，Leanback 启动入口、遥控器焦点/媒体键/返回键、默认 40sp 歌词；R8 和资源收缩开启、非 debuggable；保留测试签名。
+TV 仅 ARM64；不是 32 位电视通用包。手机平板为 ARM64 / x86_64 双架构，可覆盖之前同签名版本。
+TV APK 的 R8 usage 记录确认移除 MusicDownloads 类和本地下载管理代码。
+
+新增远控：源于 echo-remote WebUI，原生 HTTP 适配，不打包 Go 桥，不在电视中启动 WebView。
+配对随机密钥 + HttpOnly SameSite 会话；私网访问、Host/Origin 检查、有限线程/请求体；只提供播放相关 API，不开放账号接口或通用代理。默认 1987，被占用时选空闲端口。
+远控启用后使用前台播放服务维持；设备后台策略/权限/Android 前台服务实际行为尚待实机测试。
+
+实际执行的宿主测试：
+lanContractTest：15 项真实 TCP/HTTP 测试（鉴权、Cookie、跨源拒绝、方法/长度限制、停服、私网过滤）。
+scripts/test_remote_adapter.py：15 项真实 LanRemote/LanHttpServer 代码 + 播放器/Android 替身检查（页面、状态、搜索、空队列点播、暂停、进度秒/毫秒、队列、倍速、歌词、封面回退、参数限制）。这不是 Android 运行时测试。
+authContractTest：56；lyricsContractTest：31；cloudContractTest：70；queueContractTest：13；downloadContractTest：8；lyricWindowContractTest：12，均通过。
+Node 内置服务测试：13 组通过。
+APK/嵌入接口 SHA-256、ZIP CRC、架构筛选、官方原生库字节一致、16KB ELF LOAD 对齐、远控归属说明：通过。
+
+测试边界：
+没有连接 Android TV / Google TV 或真遥控器，也没有真实 Android 网络设备控制测试。
+没有完成 JNI/扫码授权/云端账号/音频解码/焦点路径/方向键调进度/系统后台生命周期/浏览器视觉的设备端到端验收。
+未在电视上测量 CPU、PSS 内存、启动耗时、持续播放功耗；APK 体积缩减不能当作运行资源实测。
+远控页面复用、协议与传输测试通过，不代表所有浏览器与电视已实测兼容。
+
+伴奏：已核对 PC acappella 分轨音源 + MKV 选轨流程，评估优先复用 MediaPlayer 音轨选择。没有真实分轨授权音源和设备解码测试，本版本没有开启伴奏。
+
+构建来源、第三方归属：android-native/THIRD_PARTY_REMOTE.md，remote-reference 原始文件及原项目许可。
+
+APK 元数据：
+[
+  {
+    "file": "EchoMusic-Android-0.10.0-debug.apk",
+    "bytes": 91783175,
+    "sha256": "1cab8849eb01ebd6c50541fe2b9685e7b73145f019bdc11e69813fb5186f2aa9",
+    "abis": [
+      "arm64-v8a",
+      "x86_64"
+    ],
+    "package": "cc.echomusic.android",
+    "zip_uncompressed_total": 274858288
+  },
+  {
+    "file": "EchoMusic-TV-0.10.0-arm64.apk",
+    "bytes": 42771064,
+    "sha256": "8d24c6196e52df06310b5b8f9d65a9e851db330b3be57c5a315e14e1d357765f",
+    "abis": [
+      "arm64-v8a"
+    ],
+    "package": "cc.echomusic.android.tv",
+    "zip_uncompressed_total": 139189074
+  }
+]
+接口包：{"version": 3, "sha256": "fc848a4f6b2c6b94e84bcd0294c0d67a54959a23fa9527368d540e940010eff8", "files": 1571, "apiVersion": "1.6.2"}

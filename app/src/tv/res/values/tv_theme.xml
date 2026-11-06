@@ -1,0 +1,1 @@
+<resources><style name="TvTheme" parent="AppTheme"><item name="android:windowFullscreen">true</item><item name="android:windowBackground">#132C3E</item><item name="android:colorAccent">#A5F2F3</item></style></resources>

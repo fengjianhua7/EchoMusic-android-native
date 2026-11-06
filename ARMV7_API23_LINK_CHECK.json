@@ -1,0 +1,21 @@
+{
+  "android_api": 23,
+  "libraries": {
+    "libc++_shared.so": {
+      "required_symbols": 161,
+      "unresolved_strong": []
+    },
+    "libecho_compat.so": {
+      "required_symbols": 27,
+      "unresolved_strong": []
+    },
+    "libecho_node.so": {
+      "required_symbols": 10,
+      "unresolved_strong": []
+    },
+    "libnode.so": {
+      "required_symbols": 457,
+      "unresolved_strong": []
+    }
+  }
+}

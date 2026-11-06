@@ -1,0 +1,23 @@
+<?xml version='1.0' encoding='utf-8'?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"><uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <application><activity android:name="com.echo.remote.MainActivity" android:exported="false" android:theme="@style/Theme.Echo">
+            </activity>
+        <activity android:name="com.echo.remote.KtvActivity" android:exported="false" android:theme="@style/Theme.Echo" />
+        <service android:name="com.echo.remote.KtvService" android:exported="false" android:foregroundServiceType="mediaPlayback|microphone" />
+        <service android:name="com.echo.remote.RemoteControlService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User initiated continuous LAN desktop music monitoring with remote MediaSession and notification playback controls; stoppable by the user" />
+        </service>
+        <service android:name="com.echo.remote.LyricService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User enabled floating lyrics synchronized with a LAN desktop music player" />
+        </service>
+    </application></manifest>
