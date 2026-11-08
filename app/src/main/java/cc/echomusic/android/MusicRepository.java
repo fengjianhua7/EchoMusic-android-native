@@ -61,8 +61,16 @@ public final class MusicRepository {
         return runner.run(scope,skip,businessResult,verify);
     }
     private AuthRequestRunner.Response<AuthStore.Scope> exchange(String path,Map<String,String> params,AuthStore.Scope scope,boolean skip) throws Exception {
+        return exchange(path,params,scope,skip,null);
+    }
+    private AuthRequestRunner.Response<AuthStore.Scope> exchange(String path,Map<String,String> params,AuthStore.Scope scope,boolean skip,byte[] audio) throws Exception {
         if(!auth.current(scope))throw new IOException("登录状态已变化，请重新操作");
         String base=scope.endpoint;
+        if(BuildConfig.MGV2000&&ApiEndpoint.embedded(base)){
+            AuthRequestRunner.Response<AuthStore.Scope> result=new Mgv2000MusicApi(prefs).get(path,params,scope,skip);
+            if(!auth.current(scope))throw new IOException("登录状态已变化，请重新操作");
+            return new AuthRequestRunner.Response<>(result.status,AuthProtocol.normalize(path,result.body),result.event,scope);
+        }
         EmbeddedApi.Connection local=null;
         if(ApiEndpoint.embedded(base)){local=EmbeddedApi.instance().await(context);base=local.url;}
         if(!auth.current(scope))throw new IOException("登录状态已变化，请重新操作");
@@ -79,6 +87,13 @@ public final class MusicRepository {
         if(!deviceCookies.isEmpty())connection.setRequestProperty("Cookie",deviceCookies);
         if(!skip&&!scope.authorization.isEmpty())connection.setRequestProperty("Authorization",scope.authorization);
         try {
+            if(audio!=null){
+                connection.setRequestMethod("POST");
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Content-Type","application/octet-stream");
+                connection.setFixedLengthStreamingMode(audio.length);
+                try(OutputStream output=connection.getOutputStream()){output.write(audio);}
+            }
             int code=connection.getResponseCode();
             if(code>=300&&code<400)throw new IOException("接口地址发生重定向，请在设置中填写最终服务地址");
             InputStream stream=code<400?connection.getInputStream():connection.getErrorStream();
@@ -114,6 +129,35 @@ public final class MusicRepository {
         if(d!=null) return array(d,keys);
         JSONArray dArray=o.optJSONArray("data");
         return dArray!=null?dArray:new JSONArray();
+    }
+    List<Song> recognize(byte[] audio)throws Exception{
+        AuthStore.Scope scope=auth.scope();
+        JSONObject response=exchange("/audio/match",params(),scope,false,audio).body;
+        if(AuthProtocol.failed(response))throw new IOException(AuthProtocol.message(response,200));
+        JSONArray data=response.optJSONArray("data");
+        List<JSONObject> ranked=new ArrayList<>();
+        if(data!=null)for(int i=0;i<data.length();i++){JSONObject match=data.optJSONObject(i);if(match!=null)ranked.add(match);}
+        ranked.sort(Comparator.comparingDouble(match->match.optDouble("dist",1)));
+        List<Song> matches=new ArrayList<>();
+        for(JSONObject match:ranked){
+            Song detected=Song.fromJson(match);
+            if(!detected.cloudIdentified()&&detected.artist.isEmpty())continue;
+            Song selected=detected;
+            try{
+                List<Song> results=search(detected.title+" "+detected.artist,1);
+                for(Song result:results){
+                    if(Song.same(result,detected)||(detected.hash.isEmpty()&&!detected.artist.isEmpty()
+                        &&LyricChoice.normalized(result.title).equals(LyricChoice.normalized(detected.title))
+                        &&LyricChoice.normalized(result.artist).equals(LyricChoice.normalized(detected.artist)))){
+                        selected=result;break;
+                    }
+                }
+            }catch(IOException unavailable){if(detected.hash.isEmpty())throw unavailable;}
+            if(!auth.current(scope))throw new IOException("账号已变化，请重新识曲");
+            if(!selected.hash.isEmpty()&&matches.stream().noneMatch(song->Song.same(song,detected)))matches.add(selected);
+            if(matches.size()>=5)break;
+        }
+        return matches;
     }
     public List<Song> search(String query,int page) throws Exception {
         JSONObject json=get("/search",params("keywords",query,"type","song","page",String.valueOf(page),"pagesize","30"));
@@ -155,6 +199,23 @@ public final class MusicRepository {
     public String resolve(Song song) throws Exception {return resolve(song,false);}
     public String resolve(Song song,boolean accompaniment) throws Exception {
         if(!song.source.isEmpty()){if(accompaniment)throw new IOException("此歌曲没有在线伴奏");return song.source;}
+        boolean directBox = BuildConfig.MGV2000 && ApiEndpoint.embedded(endpoint());
+        try {
+            return resolveCatalog(song,accompaniment);
+        } catch (AuthProtocol.ApiException error) {
+            if (!directBox || accompaniment || AuthProtocol.errorCode(error.body)!=20006
+                    || !error.eventId.isEmpty() || !song.hash.matches("[a-fA-F0-9]{32}")) throw error;
+            try {
+                String url=findUrl(perform("/user/cloud/url",params("hash",song.hash,"album_audio_id",song.mixId,
+                    "audio_id",song.fileId,"name",song.title),auth.scope(),false,false,true).body);
+                if (!url.isEmpty()) return url;
+            } catch (AuthProtocol.ApiException cloudError) {
+                if (!cloudError.eventId.isEmpty()) throw cloudError;
+            }
+            throw new IOException("曲库和云盘均未返回这首歌的播放地址（20006）",error);
+        }
+    }
+    private String resolveCatalog(Song song,boolean accompaniment)throws Exception{
         AuthRequestRunner.Response<AuthStore.Scope> verified=perform("/user/verify",params(),this.auth.scope(),false,false,true);
         JSONObject data=verified.body.optJSONObject("data");
         String auth=data==null?"":data.optString("auth","");
@@ -163,6 +224,7 @@ public final class MusicRepository {
         if(!song.albumId.isEmpty()) params.put("album_id",song.albumId);
         if(!song.mixId.isEmpty()) params.put("album_audio_id",song.mixId);
         if(accompaniment)params.put("quality","acappella");
+        else if(!BuildConfig.TV)params.put("quality",prefs.getString("playback_quality","128"));
         JSONObject r=perform("/song/url/auth/merge",params,verified.scope,false,false,true).body;
         String url=findUrl(r);
         if(url.isEmpty()) throw new IOException("当前歌曲无可用播放地址，可能需要登录或会员权限");
@@ -179,8 +241,23 @@ public final class MusicRepository {
     public List<LyricChoice> lyricChoices(Song song,int duration)throws Exception{
         Map<String,String> query=params("man","yes");if(song.hash.isEmpty())query.put("keywords",song.artist+" "+song.title);else query.put("hash",song.hash);
         if(duration>0)query.put("duration",String.valueOf(duration));if(!song.mixId.isEmpty())query.put("album_audio_id",song.mixId);
-        JSONArray candidates=array(get("/search/lyric",query),"candidates");
-        if(candidates.length()==0&&!song.hash.isEmpty())candidates=array(get("/search/lyric",params("keywords",song.artist+" "+song.title,"man","yes")),"candidates");
+        String keyword=song.artist+" "+song.title;
+        if(BuildConfig.MGV2000 && ApiEndpoint.embedded(endpoint())){
+            String title=song.title.replaceFirst("(?i)\\.(mp3|flac|m4a|wav|aac|ogg|ape)$","");
+            keyword=song.artist.isEmpty()?title:song.artist+" - "+title;
+            query.put("keywords",keyword);
+        }
+        JSONArray candidates;
+        try {
+            candidates=array(get("/search/lyric",query),"candidates");
+        } catch (AuthProtocol.ApiException error) {
+            if (!BuildConfig.MGV2000 || song.hash.isEmpty() || AuthProtocol.errorCode(error.body)!=20006
+                    || !error.eventId.isEmpty()) throw error;
+            candidates=new JSONArray();
+        }
+        if(candidates.length()==0&&!song.hash.isEmpty()){
+            candidates=array(get("/search/lyric",params("keywords",keyword.trim(),"man","yes")),"candidates");
+        }
         List<LyricChoice> result=new ArrayList<>();for(int i=0;i<candidates.length();i++){JSONObject data=candidates.optJSONObject(i);if(data==null)continue;LyricChoice choice=new LyricChoice(data);if(!choice.id.isEmpty()&&!choice.key.isEmpty())result.add(choice);}
         result.sort((left,right)->Integer.compare(right.score(song,duration),left.score(song,duration)));return result;
     }
@@ -191,12 +268,15 @@ public final class MusicRepository {
         Exception failure=null;
         for(String format:new String[]{"krc","lrc"}){
             try{JSONObject response=get("/lyric",params("id",choice.id,"accesskey",choice.key,"decode","true","fmt",format));String raw=AuthProtocol.text(response,"decodeContent","lyric");
-                if(raw.isEmpty()){String encoded=AuthProtocol.text(response,"content");if(!encoded.isEmpty())raw=Lyrics.decodeFile(java.util.Base64.getDecoder().decode(encoded));}
+                if(raw.isEmpty()){String encoded=AuthProtocol.text(response,"content");if(!encoded.isEmpty())raw=Lyrics.decodeFile((BuildConfig.MGV2000?android.util.Base64.decode(encoded,android.util.Base64.DEFAULT):java.util.Base64.getDecoder().decode(encoded)));}
                 if(!raw.isEmpty()){try{storeLyrics(song,raw);}catch(IOException ignored){}return raw;}
             }catch(AuthProtocol.ApiException error){if(AuthProtocol.errorCode(error.body)==20018||!error.eventId.isEmpty())throw error;failure=error;}
+            catch(IOException | IllegalArgumentException | JSONException error){if(!BuildConfig.MGV2000)throw error;failure=error;}
         }
-        throw new IOException("歌词内容为空，请更换歌词来源",failure);
+        throw new IOException("歌词下载失败，请重试或更换歌词来源",failure);
     }
+    int lyricSpeed(Song song){return prefs.getInt("lyric_speed_"+song.key(),100);}
+    void lyricSpeed(Song song,int percent){prefs.edit().putInt("lyric_speed_"+song.key(),Math.max(80,Math.min(120,percent))).apply();}
     public int lyricOffset(Song song){return prefs.getInt("lyric_offset_"+song.key(),0);}
     public void lyricOffset(Song song,int milliseconds){prefs.edit().putInt("lyric_offset_"+song.key(),Math.max(-10000,Math.min(10000,milliseconds))).apply();}
     public String lyrics(Song song)throws Exception{return fetchLyrics(song,null,song.durationMs);}
@@ -207,3 +287,4 @@ public final class MusicRepository {
     public boolean favorite(Song song) { return song.cloudIdentified()&&cloud.snapshot().favorite(song.cloudSong()); }
     public void toggleFavorite(Song song) { if(!song.local())throw new IllegalStateException("在线歌曲收藏必须由云端确认");List<Song> list=saved("favorites"); boolean existed=list.removeIf(s->s.key().equals(song.key())); if(!existed)list.add(0,song); save("favorites",list); }
 }
+

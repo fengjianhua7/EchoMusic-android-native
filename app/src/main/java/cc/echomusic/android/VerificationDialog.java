@@ -95,7 +95,9 @@ public final class VerificationDialog implements VerificationBroker.Host {
     }
     private void openKugou(){Intent launch=activity.getPackageManager().getLaunchIntentForPackage("com.kugou.android");if(launch==null){activity.toast("请先安装酷狗客户端");return;}activity.startActivity(launch);}
     @android.annotation.SuppressLint("SetJavaScriptEnabled")
+    @android.annotation.TargetApi(21)
     private void startTencent(){
+        if(android.os.Build.VERSION.SDK_INT<21){setError("此机顶盒请优先使用扫码登录");return;}
         if(current==null||info==null||busy||!current.active())return;
         String appid=AuthProtocol.text(info,"txappid");if(!appid.matches("[0-9]{1,32}")){setError("平台未提供有效的腾讯验证码配置，请重新获取验证信息");return;}
         destroyCaptcha();final int serial=webGeneration;final String nonce=UUID.randomUUID().toString();final VerificationBroker.Challenge challenge=current;

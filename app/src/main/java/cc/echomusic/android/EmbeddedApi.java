@@ -27,12 +27,14 @@ public final class EmbeddedApi {
     private EmbeddedApi(){}
     public synchronized void start(Context context){
         if(ready!=null)return;
+        if(android.os.Build.VERSION.SDK_INT<21){ready=new Completion<>();ready.completeExceptionally(new IOException("请在电视设置中配置外部音乐服务地址"));return;}
         Context app=context.getApplicationContext();ready=new Completion<>();Completion<Connection> completion=ready;
         Thread worker=new Thread(()->run(app,completion),"EchoMusic-API");worker.setDaemon(true);worker.start();
     }
     public String state(){return state;}
     public Connection await(Context context) throws IOException {
         if(Looper.myLooper()==Looper.getMainLooper())throw new IOException("音乐服务正在准备，请稍候");
+        if(android.os.Build.VERSION.SDK_INT<21)throw new IOException("请在电视设置中配置外部音乐服务地址");
         start(context);
         try{Connection connection=ready.get(45,TimeUnit.SECONDS);if(failed)throw new IOException("音乐服务已停止，请完全退出应用后重新打开");return connection;}
         catch(InterruptedException e){Thread.currentThread().interrupt();throw new IOException("操作已取消");}
@@ -79,6 +81,7 @@ public final class EmbeddedApi {
         String value=preferences.getString(key,"");if(value.isEmpty()){value=UUID.randomUUID().toString().replace("-","");preferences.edit().putString(key,value).apply();}return value;
     }
     private static String hex(byte[] bytes){StringBuilder text=new StringBuilder();for(byte value:bytes)text.append(String.format(Locale.ROOT,"%02x",value&255));return text.toString();}
+    @android.annotation.TargetApi(21)
     private static File prepare(Context context) throws Exception {
         JSONObject manifest;
         try(InputStream input=context.getAssets().open("embedded-api.json")){manifest=new JSONObject(read(input,65536));}

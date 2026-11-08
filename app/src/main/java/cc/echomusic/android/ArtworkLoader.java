@@ -29,13 +29,23 @@ final class ArtworkLoader {
     void bindPlaylist(ImageView view,TextView placeholder,String id){String token="playlist:"+id;view.setTag(token);io.execute(()->{try{java.util.List<Song> songs=repo.cloud.cachedPlaylist(id);if(songs.isEmpty())return;Song first=songs.get(0);Bitmap bitmap=load(first);if(bitmap!=null)main.post(()->{if(token.equals(view.getTag())){view.setImageBitmap(bitmap);placeholder.setVisibility(View.GONE);}});}catch(Exception ignored){}});}
     Bitmap load(Song song)throws Exception{Bitmap image=cache.get(song.key());if(image!=null)return image;
             if(song.local()){MediaMetadataRetriever reader=new MediaMetadataRetriever();try{reader.setDataSource(context,Uri.parse(song.source));byte[] bytes=reader.getEmbeddedPicture();if(bytes!=null)image=decode(bytes);}finally{reader.release();}}
-            else{String url=song.cover;if(url.isEmpty())url=find(repo.get("/images",MusicRepository.params("hash",song.hash,"album_id",song.albumId,"album_audio_id",song.mixId)),0);if(!url.isEmpty())image=download(url);}
+            else{
+                if(!song.cover.isEmpty()){
+                    try{image=download(song.cover);}catch(IOException unavailable){if(!BuildConfig.MGV2000)throw unavailable;}
+                }
+                if(image==null){
+                    String url=find(repo.get("/images",MusicRepository.params("hash",song.hash,"album_id",song.albumId,"album_audio_id",song.mixId)),0);
+                    if(!url.isEmpty()&&!url.equals(song.cover))image=download(url);
+                }
+            }
         if(image!=null)cache.put(song.key(),image);return image;
     }
     private static Bitmap decode(byte[] bytes){if(bytes.length>8*1024*1024)return null;BitmapFactory.Options options=new BitmapFactory.Options();options.inJustDecodeBounds=true;BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);if(options.outWidth<=0||options.outHeight<=0)return null;options.inSampleSize=1;while(Math.max(options.outWidth,options.outHeight)/options.inSampleSize>(BuildConfig.TV?720:900))options.inSampleSize*=2;options.inJustDecodeBounds=false;return BitmapFactory.decodeByteArray(bytes,0,bytes.length,options);}
     private static Bitmap download(String address)throws Exception{
         address=address.replace("{size}","500").replace("{width}","500").replace("{height}","500");if(address.startsWith("//"))address="https:"+address;if(address.startsWith("http://"))address="https://"+address.substring(7);
-        for(int redirects=0;redirects<4;redirects++){URL url=new URL(address);if(!url.getProtocol().equals("https"))return null;HttpURLConnection connection=(HttpURLConnection)url.openConnection();connection.setConnectTimeout(8000);connection.setReadTimeout(10000);connection.setInstanceFollowRedirects(false);
+        for(int redirects=0;redirects<4;redirects++){URL url=new URL(address);if(!url.getProtocol().equals("https"))return null;HttpURLConnection connection=(HttpURLConnection)url.openConnection();
+            if(BuildConfig.MGV2000)((javax.net.ssl.HttpsURLConnection)connection).setSSLSocketFactory(Mgv2000MusicApi.Tls12.FACTORY);
+            connection.setConnectTimeout(8000);connection.setReadTimeout(10000);connection.setInstanceFollowRedirects(false);
             try{int status=connection.getResponseCode();if(status>=300&&status<400){String location=connection.getHeaderField("Location");if(location==null)return null;address=new URL(url,location).toString();continue;}if(status!=200)return null;try(InputStream input=connection.getInputStream();ByteArrayOutputStream output=new ByteArrayOutputStream()){byte[] buffer=new byte[8192];int n;while((n=input.read(buffer))!=-1){if(output.size()+n>8*1024*1024)return null;output.write(buffer,0,n);}return decode(output.toByteArray());}}finally{connection.disconnect();}
         }return null;
     }

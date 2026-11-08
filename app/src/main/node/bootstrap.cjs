@@ -5,6 +5,7 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const ROUTES = Object.freeze({
   '/search': 'search',
+  '/audio/match': 'audio_match',
   '/search/hot': 'search_hot',
   '/images': 'images',
   '/playlist/track/all': 'playlist_track_all',
@@ -65,7 +66,8 @@ async function start(config, testing = {}) {
   const server = http.createServer(async (request, response) => {
     const provided = Buffer.from(String(request.headers['x-echo-token'] || ''), 'utf8');
     if (provided.length !== secret.length || !crypto.timingSafeEqual(provided, secret)) return send(response,403,{status:0,msg:'Local authentication required'});
-    if (request.method !== 'GET') return send(response,405,{status:0,msg:'Method not supported'});
+    const audioMatch=request.method==='POST' && request.url.split('?')[0]==='/audio/match';
+    if (request.method !== 'GET' && !audioMatch) return send(response,405,{status:0,msg:'Method not supported'});
     if (request.url.length > 32768) return send(response,414,{status:0,msg:'Request too large'});
     let url;
     try { url = new URL(request.url,'http://127.0.0.1'); } catch { return send(response,400,{status:0,msg:'Invalid request'}); }
@@ -74,6 +76,24 @@ async function start(config, testing = {}) {
     const name = ROUTES[url.pathname];
     if (!name) return send(response,404,{status:0,msg:'Unknown route'});
     const params = Object.fromEntries(url.searchParams);
+    if (name==='audio_match') {
+      const length=Number(request.headers['content-length']);
+      if (!audioMatch || request.headers['content-type']!=='application/octet-stream' ||
+          !Number.isInteger(length) || length<16000 || length>192000 || length%2) {
+        return send(response,400,{status:0,msg:'无效的录音数据'});
+      }
+      const chunks=[];
+      let size=0;
+      try{
+        for await (const chunk of request){
+          size+=chunk.length;
+          if(size>length)return send(response,413,{status:0,msg:'录音数据过大'});
+          chunks.push(chunk);
+        }
+      }catch{return;}
+      if(size!==length)return send(response,400,{status:0,msg:'录音不完整'});
+      params.data=Buffer.concat(chunks,size);
+    }
     // QQ supplies its own polling cookie as an explicit query field. Device and account headers win.
     const cookie = Object.assign(Object.create(null),defaults,cookies(params.cookie),cookies(request.headers.cookie),cookies(request.headers.authorization));
     params.cookie = cookie;

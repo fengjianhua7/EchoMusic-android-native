@@ -89,6 +89,9 @@ input[type=range]:disabled{opacity:.35}
 @keyframes qflash{0%{background:rgba(255,255,255,.18)}100%{background:transparent}}
 .lrow{padding:9px 2px;color:var(--text2);font-size:14px;line-height:1.45;text-align:center;overflow-wrap:anywhere;transition:color .2s ease,font-size .2s ease}
 .lrow.cur{color:var(--accent);font-weight:700;font-size:16px}
+.lrow[role=button]{cursor:pointer}
+.lrow.cur.karaoke{color:var(--fg,#eef0f4)}
+.lrow.cur .lword{background:linear-gradient(to right,var(--accent) var(--word-fill,0%),currentColor var(--word-fill,0%));background-clip:text;-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .lrow .lsub{display:block;margin-top:3px;font-size:12px;font-weight:400;color:var(--text2);opacity:.8}
 .lrow.cur .lsub{color:var(--accent);opacity:.72}
 .lrow.flash{animation:qflash .9s ease}
@@ -206,6 +209,7 @@ var state=null,seeking=false,volDragging=false,lastCoverKey='',online=false,disp
 // 进度锚点:以宿主推送的真实 currentTime 为基准,在两次推送(≈500ms)之间做平滑外推。
 // anchorAt=收到该次推送的本地时刻;raf 用它按真实流逝时长推进,而不是无脑猜播放状态。
 var anchorTime=0,anchorAt=0,anchorRate=1,anchorPlaying=false;
+var pendingSeek=null,stateRequest=0,stateApplied=0,lastSeekRevision;
 var MODES=['sequential','list','random','single'];
 var MODE_LABELS={sequential:'顺序播放',list:'列表循环',random:'随机播放',single:'单曲循环'};
 var ICON_PLAY='<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>';
@@ -220,11 +224,23 @@ function fmt(s){if(!isFinite(s))s=0;s=Math.max(0,Math.floor(s));var m=Math.floor
 function syncClock(){
   var p=state&&state.playback;
   if(!p||p.duration<=0){displayTime=-1;return;}
+  var confirmedSeek=lastSeekRevision!==undefined&&state.seekRevision!==undefined
+    &&lastSeekRevision!==state.seekRevision;
+  if(pendingSeek){
+    confirmedSeek=p.trackId!==pendingSeek.track||(pendingSeek.revision===undefined
+      ?Math.abs(p.currentTime-pendingSeek.time)<1
+      :state.seekRevision!==pendingSeek.revision&&!state.seeking);
+    if(confirmedSeek||Date.now()>pendingSeek.until)pendingSeek=null;
+    else return;
+  }
+  if(state.seeking){anchorPlaying=false;return;}
+  lastSeekRevision=state.seekRevision;
   anchorTime=p.currentTime||0;
   anchorAt=Date.now();
   anchorRate=p.playbackRate||1;
   anchorPlaying=!!p.isPlaying;
   displayTime=Math.min(Math.max(anchorTime,0),p.duration);
+  if(confirmedSeek)lyricTick(0,true);
 }
 function buzz(ms){try{if(navigator.vibrate){navigator.vibrate(ms||8);}}catch(e){}}
 var lastTap=0;
@@ -253,7 +269,7 @@ function render(){
       var img=$('cover');
       img.style.opacity=0;
       img.onload=function(){img.style.opacity=1;$('bg').style.backgroundImage='url("'+u+'")';};
-      img.onerror=function(){img.style.opacity=1;$('bg').style.backgroundImage='none';};
+      img.onerror=function(){covFallback(img);img.onload=null;img.style.opacity=1;$('bg').style.backgroundImage='none';};
       img.src=u;
       try{if('mediaSession' in navigator&&navigator.mediaSession){
         navigator.mediaSession.metadata=new MediaMetadata({title:p.title,artist:p.artist,album:p.album||'',artwork:[{src:location.origin+u,sizes:'512x512',type:'image/jpeg'}]});}}catch(e){}
@@ -343,7 +359,11 @@ function quickRefresh(){
   })();
 }
 function refresh(){
-  fetch('/api/state'+qs,{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){state=s;setOnline(true);render();}).catch(function(){setOnline(false);});
+  var request=++stateRequest;
+  fetch('/api/state'+qs,{cache:'no-store'}).then(function(r){return r.json();}).then(function(s){
+    if(request<=stateApplied)return;
+    stateApplied=request;state=s;setOnline(true);render();
+  }).catch(function(){if(request>stateApplied)setOnline(false);});
 }
 function raf(ts){
   var p=state&&state.playback;
@@ -374,10 +394,27 @@ $('toggle').addEventListener('click',tapOnce(function(){
 }));
 $('prev').addEventListener('click',tapOnce(function(){buzz();post('prev');}));
 $('next').addEventListener('click',tapOnce(function(){buzz();post('next');}));
+function seekPlayback(t){
+  var p=state&&state.playback;
+  if(!p||!p.duration||!isFinite(t))return;
+  t=Math.max(0,Math.min(t,p.duration));
+  var revision=state.seekRevision;
+  var request={track:p.trackId,time:t,revision:revision,until:Date.now()+(revision===undefined?2500:8000)};
+  pendingSeek=request;
+  displayTime=t;anchorTime=t;anchorAt=Date.now();anchorPlaying=revision===undefined&&!!p.isPlaying;
+  lFollow=true;
+  if(revision===undefined)lyricTick(0,true);
+  buzz(15);
+  if(revision===undefined){post('seek',{time:t});return;}
+  postAsync({action:'seek',time:t}).then(function(reply){
+    if(pendingSeek===request&&!reply.ok)pendingSeek=null;
+    quickRefresh();
+  });
+}
 var seekEl=$('seek');
 var timesEl=document.querySelector('.times');
 seekEl.addEventListener('input',function(){seeking=true;timesEl.classList.add('drag');$('cur').textContent=fmt(parseFloat(seekEl.value));paint(seekEl,parseFloat(seekEl.value)/parseFloat(seekEl.max)*100);});
-seekEl.addEventListener('change',function(){seeking=false;timesEl.classList.remove('drag');var t=parseFloat(seekEl.value);displayTime=t;anchorTime=t;anchorAt=Date.now();buzz(15);post('seek',{time:t});});
+seekEl.addEventListener('change',function(){seeking=false;timesEl.classList.remove('drag');seekPlayback(parseFloat(seekEl.value));});
 var volEl=$('vol');
 var volLastSent=0;
 function sendVolume(v){volLastSent=Date.now();post('volume',{volume:Number(v)},{noRefresh:true});}
@@ -674,7 +711,7 @@ qBody.addEventListener('scroll',function(){
 // 这里是判定「够宽」的唯一出处;CSS 只认 body.lyric-side,不做媒体查询,避免两处判定漂移。
 var LYRIC_WIDE='(min-width:640px)';
 var lPanel=$('lyricPanel'),lPane=$('lyricPane'),lBody=$('lyricBody');
-var lLines=[],lTimes=[],lOffset=0,lHash='',lRawTotal=0,lIndex=-1,lOpen=false,lLoading=false;
+var lLines=[],lTimes=[],lOffset=0,lRate=1,lHash='',lRawTotal=0,lIndex=-1,lOpen=false,lLoading=false;
 var lFollow=true,lTimer=null,lTickAt=0,lTrackId='',lSideOn=false;
 function lyricWide(){try{return window.matchMedia(LYRIC_WIDE).matches;}catch(e){return false;}}
 // 决定歌词这次挂在哪儿:够宽就挂进右列(由 CSS 把 .lyric-pane 拆成 display:contents,
@@ -719,7 +756,9 @@ function lyricSync(){
 function lyricMetaIn(d){
   if(!d||!d.ok||!d.meta)return;
   lOffset=d.timeOffset||0;
+  lRate=Number(d.lyricRate)||1;
   if(String(d.hash)!==lHash||Number(d.total)!==lRawTotal){loadLyric();}
+  else if(!lLoading&&!lLines.length&&d.tips){renderLyricNote(d.tips);}
 }
 function loadLyric(){
   if(lLoading)return;
@@ -731,6 +770,7 @@ function loadLyric(){
       if(!d.ok){renderLyricNote(d.error||'读取歌词失败');return;}
       lHash=String(d.hash||'');
       lOffset=d.timeOffset||0;
+      lRate=Number(d.lyricRate)||1;
       lRawTotal=Number(d.total)||0;
       lLines=d.lines||[];
       lTimes=[];
@@ -750,7 +790,20 @@ function renderLyricLines(){
     var line=lLines[i];
     var row=document.createElement('div');
     row.className='lrow';
-    row.innerHTML=esc(line.text)+(line.translated?'<span class="lsub">'+esc(line.translated)+'</span>':'');
+    var content='',cursor=0,words=line.words||[];
+    for(var w=0;w<words.length;w++){
+      var word=words[w],from=word[0],to=word[1];
+      if(from<cursor||to<=from||to>line.text.length)continue;
+      content+=esc(line.text.slice(cursor,from))+'<span class="lword" data-word="'+w+'">'+esc(line.text.slice(from,to))+'</span>';
+      cursor=to;
+    }
+    if(cursor)row.classList.add('karaoke');
+    row.innerHTML=content+esc(line.text.slice(cursor))+(line.translated?'<span class="lsub">'+esc(line.translated)+'</span>':'');
+    row.setAttribute('role','button');row.tabIndex=0;
+    (function(time){
+      row.onclick=function(){if(lHash===lTrackId)seekPlayback((time-lOffset/1000)/lRate);};
+      row.onkeydown=function(event){if(event.key==='Enter'||event.key===' '){event.preventDefault();this.click();}};
+    })(lTimes[i]);
     frag.appendChild(row);
   }
   lBody.innerHTML='';
@@ -770,15 +823,28 @@ function lyricIndexAt(t){
 }
 function lyricTick(ts,instant){
   if(!lOpen||!lTimes.length)return;
-  if(!instant&&ts-lTickAt<200)return;
+  if(!instant&&ts-lTickAt<33)return;
   lTickAt=ts||0;
   var p=state&&state.playback;
   if(!p){setLyricIndex(-1,false);return;}
   var t=displayTime>=0?displayTime:(Number(p.currentTime)||0);
-  setLyricIndex(lyricIndexAt(t+lOffset/1000),!instant);
+  if(lHash!==lTrackId||state.seeking||(pendingSeek&&pendingSeek.revision!==undefined))return;
+  var lyricTime=t*lRate+lOffset/1000;
+  var index=lyricIndexAt(lyricTime);
+  setLyricIndex(index,!instant);
+  if(index<0)return;
+  var spans=lBody.children[index].querySelectorAll('.lword');
+  for(var w=0;w<spans.length;w++){
+    var word=lLines[index].words[Number(spans[w].dataset.word)];
+    var progress=Math.max(0,Math.min(1,(lyricTime-word[2])/Math.max(.001,word[3]-word[2])));
+    spans[w].style.setProperty('--word-fill',(progress*100)+'%');
+  }
 }
 function setLyricIndex(i,smooth){
-  if(i===lIndex)return;
+  if(i===lIndex){
+    if(!smooth&&lFollow&&lBody.children[i])scrollLyricTo(lBody.children[i],false);
+    return;
+  }
   var rows=lBody.children;
   if(rows[lIndex])rows[lIndex].classList.remove('cur');
   lIndex=i;

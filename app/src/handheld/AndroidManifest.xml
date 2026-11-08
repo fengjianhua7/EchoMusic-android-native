@@ -20,4 +20,6 @@
         <service android:name="com.echo.remote.LyricService" android:exported="false" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User enabled floating lyrics synchronized with a LAN desktop music player" />
         </service>
-    </application></manifest>
+    </application>    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+</manifest>

@@ -8,6 +8,7 @@ android {
         minSdk 26
         targetSdk 35
         buildConfigField 'boolean', 'NODE_MOBILE', 'false'
+        buildConfigField 'boolean', 'MGV2000', 'false'
         versionCode 18
         versionName '0.10.5-android'
     }
@@ -15,11 +16,12 @@ android {
     signingConfigs { handheldOriginal { initWith debug; def originalKey = new File(System.getProperty('user.home'), '.android/debug.keystore'); if(originalKey.exists()) storeFile originalKey } }
     flavorDimensions 'device'
     productFlavors {
-        handheld { signingConfig signingConfigs.handheldOriginal; versionCode 23; versionName '0.11.6-android'; dimension 'device'; buildConfigField 'boolean', 'TV', 'false'; ndk { abiFilters 'arm64-v8a', 'x86_64' } }
+        handheld { signingConfig signingConfigs.handheldOriginal; versionCode 25; versionName '0.11.8-android'; dimension 'device'; buildConfigField 'boolean', 'TV', 'false'; ndk { abiFilters 'arm64-v8a', 'x86_64' } }
+        tvLegacy { minSdk 19; versionCode 28; versionName '0.10.15-android'; buildConfigField 'boolean', 'MGV2000', 'true'; multiDexEnabled true; dimension 'device'; applicationIdSuffix '.tv.legacy'; versionNameSuffix '-tv-api19'; buildConfigField 'boolean', 'TV', 'true'; buildConfigField 'boolean', 'NODE_MOBILE', 'false' }
         tv32 { minSdk 23; dimension 'device'; applicationIdSuffix '.tv'; versionNameSuffix '-tv-armv7'; buildConfigField 'boolean', 'TV', 'true'; buildConfigField 'boolean', 'NODE_MOBILE', 'true'; ndk { abiFilters 'armeabi-v7a' } }
         tv { dimension 'device'; applicationIdSuffix '.tv'; versionNameSuffix '-tv'; buildConfigField 'boolean', 'TV', 'true'; ndk { abiFilters 'arm64-v8a' } }
     }
-    sourceSets { tv32 { manifest.srcFile 'src/tv32/AndroidManifest.xml'; res.srcDirs = ['src/tv/res'] } }
+    sourceSets { tvLegacy { res.srcDirs = ['src/tv/res', 'src/tvLegacy/res'] }; tv32 { manifest.srcFile 'src/tv32/AndroidManifest.xml'; res.srcDirs = ['src/tv/res'] } }
     buildTypes {
         tvOptimized { initWith debug; debuggable false; signingConfig signingConfigs.debug; minifyEnabled true; shrinkResources true; proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-tv.pro'; matchingFallbacks=['debug'] }
     }
@@ -62,6 +64,10 @@ tasks.register('authContractTest', JavaExec) {
 dependencies {
     handheldImplementation files('libs/javet-node-android-6.0.2.aar')
     tvImplementation files('libs/javet-node-android-6.0.2.aar')
+    compileOnly files('libs/zxing-core-3.3.3.jar')
+    tvLegacyImplementation files('libs/zxing-core-3.3.3.jar')
+    tvLegacyImplementation files('libs/multidex-2.0.1.aar')
+tvLegacyCompileOnly files('libs/javet-compile-only.jar')
     tv32CompileOnly files('libs/javet-compile-only.jar')
     coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.5'
 }
@@ -164,3 +170,6 @@ tasks.register('completionContractTest', JavaExec) {
     classpath = files(layout.buildDirectory.dir('completion-contract'))
     mainClass = 'cc.echomusic.android.CompletionTest'
 }
+
+
+configurations.configureEach { exclude group: 'androidx.multidex', module: 'multidex' }

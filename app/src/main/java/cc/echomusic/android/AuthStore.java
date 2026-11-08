@@ -15,19 +15,20 @@ public final class AuthStore {
     private static final Object LOCK=new Object();
     private static final String KEY="echomusic.account.v1";
     private final SharedPreferences prefs;
+    private final Context context;
     public static final class Scope {
         final String endpoint, authorization;
         final long version;
         Scope(String endpoint,String authorization,long version){this.endpoint=endpoint;this.authorization=authorization;this.version=version;}
     }
-    public AuthStore(Context context){prefs=context.getSharedPreferences("echo",Context.MODE_PRIVATE);}
+    public AuthStore(Context context){this.context=context.getApplicationContext();prefs=context.getSharedPreferences("echo",Context.MODE_PRIVATE);}
     public static String normalize(String endpoint){return endpoint.trim().replaceAll("/+$","");}
     public Scope scope(){synchronized(LOCK){return new Scope(ApiEndpoint.selected(prefs.getString("endpoint","")),authorization(),prefs.getLong("session_version",0));}}
     public boolean current(Scope scope){synchronized(LOCK){return scope.endpoint.equals(ApiEndpoint.selected(prefs.getString("endpoint","")))&&scope.version==prefs.getLong("session_version",0);}}
     public JSONObject account(){synchronized(LOCK){
         String base=ApiEndpoint.selected(prefs.getString("endpoint",""));
         String encoded=prefs.getString("account_"+base,"");
-        try{if(!encoded.isEmpty())return new JSONObject(decrypt(encoded));}catch(Exception ignored){/* A missing/invalidated device key requires signing in again. */}
+        try{if(!encoded.isEmpty())return new JSONObject(android.os.Build.VERSION.SDK_INT<23?LegacyAccountCipher.decrypt(encoded):decrypt(encoded));}catch(Exception ignored){/* A missing/invalidated device key requires signing in again. */}
         return new JSONObject();
     }}
     public String authorization(){
@@ -44,7 +45,7 @@ public final class AuthStore {
         if(old.equals(next)&&header.equals(authorization())&&!prefs.contains("authorization"))return;
         JSONObject account=new JSONObject();account.put("authorization",header);
         if(!header.isEmpty())account.put("nickname","已配置账号凭证");
-        String encrypted=encrypt(account.toString());
+        String encrypted=android.os.Build.VERSION.SDK_INT<23?LegacyAccountCipher.encrypt(context,account.toString()):encrypt(account.toString());
         prefs.edit().putString("endpoint",next).putString("account_"+next,encrypted).remove("authorization").putLong("session_version",prefs.getLong("session_version",0)+1).apply();
     }}
     public boolean install(Scope expected,JSONObject data) throws Exception {synchronized(LOCK){
@@ -58,10 +59,11 @@ public final class AuthStore {
         }
         JSONObject account=new JSONObject();account.put("authorization",header.toString());account.put("userid",user);
         String nickname=AuthProtocol.text(data,"nickname","username","nick_name");account.put("nickname",nickname.isEmpty()?"酷狗用户 "+user:nickname);
-        String encrypted=encrypt(account.toString());
+        String encrypted=android.os.Build.VERSION.SDK_INT<23?LegacyAccountCipher.encrypt(context,account.toString()):encrypt(account.toString());
         prefs.edit().putString("account_"+expected.endpoint,encrypted).remove("authorization").putLong("session_version",expected.version+1).apply();return true;
     }}
     public void logout(){synchronized(LOCK){String base=ApiEndpoint.selected(prefs.getString("endpoint",""));prefs.edit().remove("account_"+base).remove("authorization").putLong("session_version",prefs.getLong("session_version",0)+1).apply();}VerificationBroker.instance().cancelAll("账号已退出，请重新操作");}
+    @android.annotation.TargetApi(23)
     private static javax.crypto.SecretKey key() throws Exception {
         KeyStore store=KeyStore.getInstance("AndroidKeyStore");store.load(null);
         if(!store.containsAlias(KEY)){

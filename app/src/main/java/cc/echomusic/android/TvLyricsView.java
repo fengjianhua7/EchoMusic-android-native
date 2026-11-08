@@ -10,10 +10,12 @@ final class TvLyricsView extends View {
     private Lyrics.Document document;private int position;
     TvLyricsView(Context context){super(context);setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_YES);}
     void display(Lyrics.Document doc,int time){document=doc;position=time;invalidate();}
+    private String emptyMessage="正在准备歌词…";
+    void emptyMessage(String message){emptyMessage=message;invalidate();}
     @Override protected void onDraw(Canvas canvas){super.onDraw(canvas);
         int current=document==null?-1:Lyrics.current(document.lines,position);
         float density=getResources().getDisplayMetrics().density,slot=getHeight()/3f;
-        if(document==null||document.lines.isEmpty()){paint.setColor(Color.WHITE);paint.setTextSize(30*density);paint.setTextAlign(Paint.Align.CENTER);canvas.drawText(document==null?"正在准备歌词…":"暂无同步歌词",getWidth()/2f,getHeight()/2f,paint);return;}
+        if(document==null||document.lines.isEmpty()){paint.setColor(Color.WHITE);paint.setTextSize(30*density);paint.setTextAlign(Paint.Align.CENTER);canvas.drawText(document==null?emptyMessage:"暂无同步歌词",getWidth()/2f,getHeight()/2f,paint);return;}
         for(int row=0;row<3;row++){
             int index=Math.max(0,current)+row-1;if(index<0||index>=document.lines.size())continue;
             Lyrics.Line line=document.lines.get(index);String text=line.text.isEmpty()?"♪":line.text;

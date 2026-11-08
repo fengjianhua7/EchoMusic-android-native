@@ -64,7 +64,7 @@ public final class LoginDialog {
         outer.addView(activity.text("短信登录，或使用另一台设备扫码确认。",14,0xff36575e));activity.gap(outer,16);
         HorizontalScrollView tabs=new HorizontalScrollView(activity);tabs.setHorizontalScrollBarEnabled(false);LinearLayout row=activity.row();tabs.addView(row);
         String[] modes={"sms","kugou","qq","wechat"},labels={"手机验证码","酷狗扫码","QQ 扫码","微信扫码"};
-        for(int i=0;i<modes.length;i++){final String target=modes[i];TextView b=activity.button(labels[i],()->switchMode(target));if(mode.equals(target))b.setBackground(activity.shape(0xffd7e6d8,12));LinearLayout.LayoutParams p=activity.lp(-2,48);p.rightMargin=activity.dp(6);row.addView(b,p);}
+        for(int i=0;i<modes.length;i++){final String target=modes[i];if(BuildConfig.MGV2000&&ApiEndpoint.embedded(scope.endpoint)&&!target.equals("kugou"))continue;TextView b=activity.button(labels[i],()->switchMode(target));if(mode.equals(target))b.setBackground(activity.shape(0xffd7e6d8,12));LinearLayout.LayoutParams p=activity.lp(-2,48);p.rightMargin=activity.dp(6);row.addView(b,p);}
         outer.addView(tabs,activity.lp(-1,52));activity.gap(outer,12);
         body=activity.col();outer.addView(body,activity.lp(-1,-2));
         message=activity.text(status,14,0xff07515d);body.addView(message);activity.gap(body,12);
@@ -146,7 +146,9 @@ public final class LoginDialog {
         String key,image;Map<String,String> params=new HashMap<>();
         if(provider.equals("kugou")){
             JSONObject response=repository.loginGet(scope,"/login/qr/key",MusicRepository.params());JSONObject data=response.optJSONObject("data");key=AuthProtocol.text(data,"qrcode","key");image=AuthProtocol.text(data,"qrcode_img");
-            if(key.isEmpty())throw new IOException("二维码响应缺少 key");
+            if(BuildConfig.MGV2000&&key.isEmpty())key=AuthProtocol.text(response,"qrcode","key");
+            if(key.isEmpty())throw new IOException("音乐服务未返回二维码登录码");
+            if(BuildConfig.MGV2000){String url="https://h5.kugou.com/apps/loginQRCode/html/index.html?qrcode="+android.net.Uri.encode(key);return new QrSession(provider,key,params,Mgv2000Input.qr(url));}
             if(image.isEmpty())image=AuthProtocol.qrImage(repository.loginGet(scope,"/login/qr/create",MusicRepository.params("key",key,"qrimg","true")));
         }else if(provider.equals("qq")){
             JSONObject response=repository.loginGet(scope,"/login/qq/qr/create",MusicRepository.params());key=AuthProtocol.text(response,"qrsig");image=AuthProtocol.text(response,"qrcode");

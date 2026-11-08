@@ -65,7 +65,7 @@ public class MainActivity extends Activity {
     }
     @Override public void onStart(){super.onStart();VerificationBroker.instance().attach(verificationDialog);loginDialog.foreground(true);lyricsPanel.foreground(true);}
     @Override public void onPostResume(){super.onPostResume();syncCloud(false);if(!getSharedPreferences("echo",0).getBoolean("login_prompted_v3",false)&&repo.auth.authorization().isEmpty()){getSharedPreferences("echo",0).edit().putBoolean("login_prompted_v3",true).apply();main.post(()->{if(!isFinishing()&&!isDestroyed())loginDialog.open(installed->onAccountChanged(),null);});}}
-    @Override public void onStop(){lyricsPanel.foreground(false);loginDialog.foreground(false);VerificationBroker.instance().detach(verificationDialog);verificationDialog.pause();super.onStop();}
+    @Override public void onStop(){if(recognitionDialog!=null)recognitionDialog.dismiss();lyricsPanel.foreground(false);loginDialog.foreground(false);VerificationBroker.instance().detach(verificationDialog);verificationDialog.pause();super.onStop();}
     @Override public void onSaveInstanceState(Bundle b){super.onSaveInstanceState(b);b.putInt("page",page);b.putString("query",query);b.putString("heading",heading);b.putString("playlist",playlistId);b.putInt("resultPage",resultPage);JSONArray a=new JSONArray();for(Song s:tracks)a.put(s.json());b.putString("tracks",a.toString());}
     @Override public void onConfigurationChanged(Configuration c){super.onConfigurationChanged(c);if(playerDialog!=null){playerDialog.dismiss();playerDialog=null;}fullPlayer=false;render();loginDialog.configurationChanged();verificationDialog.resize();lyricsPanel.resize();}
     private final Runnable ticker=new Runnable(){public void run(){updatePlayer();if(page==8&&++downloadTick%4==0)render();main.postDelayed(this,BuildConfig.TV?1500:700);}};
@@ -82,6 +82,7 @@ public class MainActivity extends Activity {
     void gap(LinearLayout l,int h){l.addView(new View(this),lp(1,h));}
     void line(LinearLayout l){View v=new View(this);v.setBackgroundColor(LINE);l.addView(v,lp(-1,1));}
     void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
+    @android.annotation.TargetApi(21)
     void render(){
         if(lyricsPanel!=null&&lyricsPanel.isOpen())return;
         if(isFinishing())return;
@@ -102,7 +103,7 @@ public class MainActivity extends Activity {
         updatePlayer();
     }
     private ListView tvSongList;private boolean tvEnterSongs,tvRestoreSongs;private int tvSongPosition;
-    void renderTv(){if(tvSongList!=null&&tvSongList.hasFocus()){tvRestoreSongs=true;tvSongPosition=Math.max(0,tvSongList.getSelectedItemPosition());}tvSongList=null;if(page!=7){tvEnterSongs=false;tvRestoreSongs=false;}String previousFocus=TvFocus.focusedLabel(root);miniTitle=null;playerTitle=null;progress=null;playerArtwork=null;root=col();root.setBackgroundColor(0xff132c3e);setContentView(root);body=row();root.addView(body,new LinearLayout.LayoutParams(-1,0,1));LinearLayout nav=col();pad(nav,16);nav.addView(text("echo. TV",28,0xffa5f2f3),lp(-1,68));nav.addView(button("云端音乐库",()->{page=2;render();syncCloud(false);}),lp(-1,60));gap(nav,12);nav.addView(button("搜索歌曲",()->{page=1;render();}),lp(-1,60));gap(nav,12);nav.addView(button("正在播放 / 歌词",this::openPlayer),lp(-1,60));gap(nav,12);nav.addView(button("局域网远控",this::remoteSettings),lp(-1,60));gap(nav,12);nav.addView(button("账号 / 设置",()->{page=3;render();}),lp(-1,60));body.addView(nav,lp(210,-1));content=col();pad(content,24);content.setBackgroundColor(0xffecf7f8);body.addView(content,new LinearLayout.LayoutParams(0,-1,1));if(page==1)searchPage();else if(page==3){header("电视设置","方向键移动 · 确认键选择 · 返回键退出当前层");content.addView(button("扫码登录 / 手机验证码",()->loginDialog.open(installed->onAccountChanged(),null)),lp(-1,64));gap(content,16);content.addView(button("局域网远控设置",this::remoteSettings),lp(-1,64));gap(content,16);if(!repo.auth.authorization().isEmpty()){content.addView(button("退出账号",()->new AlertDialog.Builder(this).setTitle("退出当前账号？").setMessage("停止播放并退出云端账号，保留设备设置和播放记录。").setNegativeButton("取消",null).setPositiveButton("退出",(d,w)->{if(service!=null)service.stopPlayback();repo.auth.logout();onAccountChanged();render();}).show()),lp(-1,64));gap(content,16);}content.addView(text("音乐不落盘 · 仅保留一首歌词和封面缓存 · 辅助缓存上限 8MB",18,MUTED));gap(content,12);content.addView(text("电视优化版 · 无本地播放与下载入口",20,MUTED));}else if(page==7||page==4||page==5)trackPage();else tvLibrary();updatePlayer();TvFocus.install(root);TvFocus.restore(root,previousFocus);if(tvSongList!=null&&tvSongList.getCount()>0&&(tvEnterSongs||tvRestoreSongs)){final ListView target=tvSongList;final int at=tvEnterSongs?0:Math.min(tvSongPosition,target.getCount()-1);tvEnterSongs=false;tvRestoreSongs=false;target.post(()->{if(target==tvSongList&&target.isAttachedToWindow()){target.requestFocus();target.setSelection(at);}});}}
+    void renderTv(){if(tvSongList!=null&&tvSongList.hasFocus()){tvRestoreSongs=true;tvSongPosition=Math.max(0,tvSongList.getSelectedItemPosition());}tvSongList=null;if(page!=7){tvEnterSongs=false;tvRestoreSongs=false;}String previousFocus=TvFocus.focusedLabel(root);miniTitle=null;playerTitle=null;progress=null;playerArtwork=null;root=col();root.setBackgroundColor(0xff132c3e);setContentView(root);body=row();root.addView(body,new LinearLayout.LayoutParams(-1,0,1));LinearLayout nav=col();pad(nav,16);nav.addView(text("echo. TV",28,0xffa5f2f3),lp(-1,68));nav.addView(button("云端音乐库",()->{page=2;render();syncCloud(false);}),lp(-1,60));gap(nav,12);nav.addView(button("搜索歌曲",()->{page=1;render();}),lp(-1,60));gap(nav,12);nav.addView(button("正在播放 / 歌词",this::openPlayer),lp(-1,60));gap(nav,12);nav.addView(button("局域网远控",this::remoteSettings),lp(-1,60));gap(nav,12);nav.addView(button("账号 / 设置",()->{page=3;render();}),lp(-1,60));body.addView(nav,lp(210,-1));content=col();pad(content,24);content.setBackgroundColor(0xffecf7f8);body.addView(content,new LinearLayout.LayoutParams(0,-1,1));if(page==1)searchPage();else if(page==3){header("电视设置","方向键移动 · 确认键选择 · 返回键退出当前层");if(BuildConfig.MGV2000)content.addView(button("设置音乐服务地址",this::advancedConnection),lp(-1,56));content.addView(button("扫码登录 / 手机验证码",()->loginDialog.open(installed->onAccountChanged(),null)),lp(-1,64));gap(content,16);content.addView(button("局域网远控设置",this::remoteSettings),lp(-1,64));gap(content,16);if(!repo.auth.authorization().isEmpty()){content.addView(button("退出账号",()->new AlertDialog.Builder(this).setTitle("退出当前账号？").setMessage("停止播放并退出云端账号，保留设备设置和播放记录。").setNegativeButton("取消",null).setPositiveButton("退出",(d,w)->{if(service!=null)service.stopPlayback();repo.auth.logout();onAccountChanged();render();}).show()),lp(-1,64));gap(content,16);}content.addView(text("音乐不落盘 · 仅保留一首歌词和封面缓存 · 辅助缓存上限 8MB",18,MUTED));gap(content,12);content.addView(text("电视优化版 · 无本地播放与下载入口",20,MUTED));}else if(page==7||page==4||page==5)trackPage();else tvLibrary();updatePlayer();TvFocus.install(root);TvFocus.restore(root,previousFocus);if(tvSongList!=null&&tvSongList.getCount()>0&&(tvEnterSongs||tvRestoreSongs)){final ListView target=tvSongList;final int at=tvEnterSongs?0:Math.min(tvSongPosition,target.getCount()-1);tvEnterSongs=false;tvRestoreSongs=false;target.post(()->{if(target==tvSongList&&target.isAttachedToWindow()){target.requestFocus();target.setSelection(at);}});}}
     void tvLibrary(){CloudLibrary.Snapshot<AuthStore.Scope> state=repo.cloud.snapshot();header("云端音乐库",cloudSyncing?"正在同步…":cloudMessage.isEmpty()?repo.auth.displayName():cloudMessage);if(!AuthProtocol.positiveId(state.session.userid)){content.addView(button("扫码登录云端账号",()->loginDialog.open(installed->onAccountChanged(),null)),lp(-1,64));return;}LinearLayout actions=row();actions.addView(button("我喜欢 · "+state.favorites.size()+" 首",this::openCloudFavorites));actions.addView(button("刷新云端",()->syncCloud(true)));actions.addView(button("选择收藏歌单",this::chooseCloudFavorites));content.addView(actions);gap(content,12);ListView list=new ListView(this);list.setDivider(null);List<CloudProtocol.Playlist> items=state.playlists;list.setAdapter(new BaseAdapter(){public int getCount(){return items.size();}public Object getItem(int position){return items.get(position);}public long getItemId(int position){return position;}public View getView(int position,View recycled,ViewGroup parent){CloudProtocol.Playlist playlist=items.get(position);TextView view=recycled instanceof TextView?(TextView)recycled:text("",22,INK);view.setText(getString(R.string.playlist_name_count,playlist.name,playlist.count));view.setMinHeight(dp(68));pad(view,14);return view;}});list.setOnItemClickListener((parent,v,position,id)->openCloudPlaylist(items.get(position)));content.addView(list,new LinearLayout.LayoutParams(-1,0,1));}
     View navigation(boolean rail){LinearLayout nav=rail?col():row();nav.setBackgroundColor(Color.WHITE);pad(nav,rail?12:4);if(rail){TextView logo=title("echo.",30);logo.setTextColor(GREEN);logo.setGravity(Gravity.CENTER);nav.addView(logo,lp(-1,86));}String[] names={"发现","远控","音乐库","设置"},icons={"home","remote","library","settings"};for(int i=0;i<4;i++){final int index=i;LinearLayout item=col();item.setGravity(Gravity.CENTER);MusicIconView icon=new MusicIconView(this,22);icon.setText(icons[i]);icon.setTextColor((page==i&&i!=1)?GREEN:MUTED);icon.setContentDescription(names[i]);item.addView(icon,lp(28,28));TextView label=text(names[i],rail?13:11,(page==i&&i!=1)?GREEN:MUTED);label.setGravity(Gravity.CENTER);item.addView(label,lp(-1,20));if(page==i&&i!=1)item.setBackground(shape(0xffe2f4eb,14));item.setOnClickListener(v->{if(index==1){startActivity(new Intent().setClassName(this,"com.echo.remote.MainActivity"));return;}++request;busy=false;page=index;heading="";playlistId="";status="";tracks=new ArrayList<>();activeCloud=null;cloudFavoritesPage=false;render();if(index==2)syncCloud(false);});if(rail){nav.addView(item,lp(-1,64));gap(nav,8);}else nav.addView(item,new LinearLayout.LayoutParams(0,-1,1));}return nav;}
     void header(String name,String sub){content.addView(title(name,30));gap(content,8);content.addView(text(sub,13,MUTED));gap(content,24);}
@@ -130,7 +131,7 @@ public class MainActivity extends Activity {
         header("搜索","搜索歌曲与歌手，找到你的下一首循环。");
         LinearLayout search=row();EditText input=new EditText(this);if(!BuildConfig.TV){search.setBackground(shape(0xffe6eaee,24));input.setBackgroundColor(Color.TRANSPARENT);input.setPadding(dp(16),0,dp(8),0);}input.setSingleLine();input.setText(query);input.setTextSize(16);input.setHint("歌曲、歌手");input.setTextColor(INK);input.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH);search.addView(input,new LinearLayout.LayoutParams(0,dp(52),1));
         Runnable run=()->{query=input.getText().toString().trim();if(query.isEmpty())return;if(!BuildConfig.TV)rememberSearch(query);hideKeyboard(input);tracks=new ArrayList<>();resultPage=1;fetch(false);};
-        input.setOnEditorActionListener((v,a,event)->{if(a==android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH){run.run();return true;}return false;});search.addView(button("搜索",run),lp(76,48));content.addView(search);gap(content,12);if(!BuildConfig.TV&&searchKeyboardPending){searchKeyboardPending=false;input.requestFocus();content.setAlpha(0);content.setTranslationY(dp(8));content.animate().alpha(1).translationY(0).setDuration(180).start();input.postDelayed(()->{if(page==1&&input.isAttachedToWindow()){((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(input,InputMethodManager.SHOW_IMPLICIT);}},140);}
+        input.setOnEditorActionListener((v,a,event)->{if(a==android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH){run.run();return true;}return false;});search.addView(button("搜索",run),lp(64,48));if(!BuildConfig.TV)search.addView(button("识曲",()->{hideKeyboard(input);recognizeSong();}),lp(64,48));content.addView(search);if(BuildConfig.MGV2000)content.addView(button("遥控器键盘",()->Mgv2000Input.open(this,input,false)),lp(-1,48));gap(content,12);if(!BuildConfig.TV&&searchKeyboardPending){searchKeyboardPending=false;input.requestFocus();content.setAlpha(0);content.setTranslationY(dp(8));content.animate().alpha(1).translationY(0).setDuration(180).start();input.postDelayed(()->{if(page==1&&input.isAttachedToWindow()){((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).showSoftInput(input,InputMethodManager.SHOW_IMPLICIT);}},140);}
         notice=text(busy?"正在搜索…":status,14,MUTED);content.addView(notice,lp(-1,40));
         if(tracks.isEmpty()&&!busy&&!BuildConfig.TV){searchSuggestions(input,run);}else if(tracks.isEmpty()&&!busy){TextView hint=text("输入关键词，开始发现音乐。",16,MUTED);pad(hint,20);content.addView(hint);if(repo.endpoint().isEmpty())content.addView(button("打开设置",()->{page=3;render();}));}
         else listTracks();
@@ -249,16 +250,22 @@ public class MainActivity extends Activity {
         form.addView(title("关于 EchoMusic Android",18));gap(form,10);form.addView(text("0.10.2 · 云端音乐库与逐字歌词版\n手机 / 平板 / 横竖屏 / 分屏自适应\n基于 hoowhoami/EchoMusic · GPL-3.0-only\n\n内置音乐连接，无需电脑或额外安装工具。支持扫码和短信登录、平台安全验证、在线搜索、本地音乐、队列、收藏、同步歌词和后台媒体控制。",14,MUTED));gap(form,20);
         form.addView(button("查看原项目",()->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/hoowhoami/EchoMusic")))));
     }
-    void advancedConnection(){
-        LinearLayout form=col();pad(form,20);form.addView(text("默认使用内置连接。仅在需要连接自己的服务时填写地址；切换连接后需要重新登录。",14,MUTED));gap(form,10);
-        EditText endpoint=new EditText(this);endpoint.setSingleLine();endpoint.setInputType(17);endpoint.setHint("留空使用内置连接");endpoint.setText(ApiEndpoint.embedded(repo.endpoint())?"":repo.endpoint());form.addView(endpoint,lp(-1,56));
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("高级连接设置").setView(form).setNegativeButton("取消",null).setPositiveButton("保存",null).create();
+    void advancedConnection(){advancedConnection(null);}
+    void advancedConnection(Runnable afterSave){
+        LinearLayout form=col();pad(form,20);form.addView(text(BuildConfig.MGV2000?"默认直连酷狗。仅在使用自己的音乐服务时填写地址，清空可恢复直连。":"默认使用内置连接。仅在需要连接自己的服务时填写地址；切换连接后需要重新登录。",14,MUTED));gap(form,10);
+        EditText endpoint=new EditText(this);endpoint.setSingleLine();endpoint.setInputType(17);endpoint.setHint(Build.VERSION.SDK_INT<21?"留空直接扫码登录":"留空使用内置连接");endpoint.setText(ApiEndpoint.embedded(repo.endpoint())?"":repo.endpoint());form.addView(endpoint,lp(-1,56));
+        TextView keyboard=BuildConfig.MGV2000?button("遥控器键盘",()->Mgv2000Input.open(this,endpoint,true)):null;
+        if(keyboard!=null)form.addView(keyboard,lp(-1,48));
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(BuildConfig.MGV2000?"设置音乐服务地址":"高级连接设置").setView(form).setNegativeButton("取消",null).setPositiveButton("保存",null).create();
         dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
-            String value=endpoint.getText().toString().trim();try{
+            String value=endpoint.getText().toString().trim();if(BuildConfig.MGV2000&&!value.isEmpty()&&!value.contains("://"))value="http://"+value;try{
                 if(!value.isEmpty()){java.net.URI uri=new java.net.URI(value);if((!"https".equals(uri.getScheme())&&!"http".equals(uri.getScheme()))||uri.getHost()==null||uri.getUserInfo()!=null||uri.getQuery()!=null||uri.getFragment()!=null)throw new Exception("请输入有效的 HTTP 或 HTTPS 服务地址");}
-                String selected=ApiEndpoint.selected(value);repo.auth.configure(selected,selected.equals(repo.endpoint())?repo.auth.authorization():"");VerificationBroker.instance().cancelAll("连接设置已变化，请重试");onAccountChanged();dialog.dismiss();render();toast("连接设置已保存");
+                String selected=ApiEndpoint.selected(value);repo.auth.configure(selected,selected.equals(repo.endpoint())?repo.auth.authorization():"");VerificationBroker.instance().cancelAll("连接设置已变化，请重试");onAccountChanged();dialog.dismiss();render();toast("连接设置已保存");if(afterSave!=null)afterSave.run();
             }catch(Exception error){endpoint.setError(error.getMessage()==null?"地址无效":error.getMessage());}
-        }));dialog.show();
+        }));
+        if(keyboard!=null)dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_HIDDEN);
+        dialog.show();
+        if(keyboard!=null){TvFocus.install(dialog.getWindow().getDecorView());keyboard.requestFocus();}
     }
     void onAccountChanged(){++cloudSerial;++cloudTrackSerial;++cloudOperation;cloudSyncing=false;cloudMutation=false;lastCloudResume=0;cloudMessage="";activeCloud=null;cloudFavoritesPage=false;if(page==7){page=2;tracks=new ArrayList<>();}++request;busy=false;if(service!=null&&service.current()!=null&&service.current().source.isEmpty())service.stopPlayback();syncCloud(true);}
     void saveLoginQr(android.graphics.Bitmap bitmap){pendingLoginQr=bitmap;Intent intent=new Intent(Intent.ACTION_CREATE_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("image/png");intent.putExtra(Intent.EXTRA_TITLE,"EchoMusic-登录二维码.png");startActivityForResult(intent,11);}
@@ -270,6 +277,7 @@ public class MainActivity extends Activity {
     private void clearPeek(){peekTitle=null;peekArtist=null;peekLine=null;peekPlay=null;peekLike=null;peekTime=null;peekArt=null;peekPlaceholder=null;peekProgress=null;}
     private TextView touchControl(String label,String description,Runnable action){TextView view=new MusicIconView(this,24);view.setText(label);view.setTextColor(INK);view.setGravity(Gravity.CENTER);view.setContentDescription(description);view.setOnClickListener(v->action.run());return view;}
     void skipTouch(boolean forward){if(service==null||service.queue().isEmpty())return;startMusicService(new Intent(this,PlaybackService.class));if(forward)service.next();else service.playAt((service.queueIndex()-1+service.queue().size())%service.queue().size());updatePlayer();if(miniCover!=null&&!lyricsPanel.isOpen()){miniCover.setAlpha(.4f);miniCover.animate().alpha(1).setDuration(180).start();}if(playbackPeek!=null){main.removeCallbacks(hidePlaybackPeek);main.postDelayed(hidePlaybackPeek,5000);}}
+    @android.annotation.TargetApi(21)
     void showPlaybackPeek(){if(BuildConfig.TV||isFinishing()||lyricsPanel.isOpen()||currentSong()==null)return;main.removeCallbacks(hidePlaybackPeek);hidePlaybackPeek.run();LinearLayout card=col();card.setPadding(dp(18),dp(16),dp(18),dp(12));GradientDrawable background=new GradientDrawable(GradientDrawable.Orientation.TL_BR,new int[]{0xfff0f1fc,0xffffffff});background.setCornerRadius(dp(24));card.setBackground(background);
         LinearLayout header=row();FrameLayout art=new FrameLayout(this);art.setBackground(shape(0xffe8ebef,14));art.setClipToOutline(true);peekArt=new ImageView(this);peekArt.setScaleType(ImageView.ScaleType.CENTER_CROP);art.addView(peekArt,new FrameLayout.LayoutParams(-1,-1));peekPlaceholder=text("♪",28,MUTED);peekPlaceholder.setGravity(Gravity.CENTER);art.addView(peekPlaceholder,new FrameLayout.LayoutParams(-1,-1));header.addView(art,lp(84,84));art.setOnClickListener(v->{hidePlaybackPeek.run();openPlayer();});LinearLayout meta=col();meta.setPadding(dp(14),0,dp(8),0);peekTitle=title("",19);peekTitle.setSingleLine();peekTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);meta.addView(peekTitle);peekArtist=text("",13,MUTED);peekArtist.setSingleLine();meta.addView(peekArtist);gap(meta,8);peekLine=text("",12,MUTED);peekLine.setSingleLine();peekLine.setEllipsize(android.text.TextUtils.TruncateAt.END);meta.addView(peekLine);header.addView(meta,new LinearLayout.LayoutParams(0,-2,1));header.addView(touchControl("⌄","收起播放浮窗",hidePlaybackPeek),lp(32,44));card.addView(header);gap(card,10);
         peekProgress=new SeekBar(this);peekProgress.setProgressTintList(android.content.res.ColorStateList.valueOf(INK));peekProgress.setThumbTintList(android.content.res.ColorStateList.valueOf(INK));card.addView(peekProgress,lp(-1,26));peekProgress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar b,int value,boolean user){}public void onStartTrackingTouch(SeekBar b){main.removeCallbacks(hidePlaybackPeek);}public void onStopTrackingTouch(SeekBar b){seekCurrent(b.getProgress());main.postDelayed(hidePlaybackPeek,5000);}});peekTime=text("",11,MUTED);card.addView(peekTime);LinearLayout controls=row();peekLike=touchControl("♡","收藏当前歌曲",()->{if(currentSong()!=null)toggleSongFavorite(currentSong());});controls.addView(peekLike,new LinearLayout.LayoutParams(0,dp(52),1));controls.addView(touchControl("|◀","上一首",()->skipTouch(false)),new LinearLayout.LayoutParams(0,dp(52),1));peekPlay=touchControl("▶","播放或暂停",this::toggle);peekPlay.setBackground(shape(0xffe7ebee,28));controls.addView(peekPlay,lp(56,56));controls.addView(touchControl("▶|","下一首",()->skipTouch(true)),new LinearLayout.LayoutParams(0,dp(52),1));controls.addView(touchControl("☷","播放队列",()->{hidePlaybackPeek.run();showQueue();}),new LinearLayout.LayoutParams(0,dp(52),1));card.addView(controls);
@@ -300,21 +308,167 @@ public class MainActivity extends Activity {
     private TextView theaterIcon(String label,String description,Runnable action){TextView view=text(label,BuildConfig.TV?20:26,Color.WHITE);view.setGravity(Gravity.CENTER);view.setContentDescription(description);view.setOnClickListener(v->action.run());return view;}
     void buildTheaterControls(LinearLayout panel){if(!BuildConfig.TV){buildTouchTransport(panel);return;}
 
-        panel.setPadding(dp(8),dp(4),dp(8),dp(6));playerStatus=text("",12,0xffe0edf3);panel.addView(playerStatus);progress=new SeekBar(this);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0x668faebb));progress.setThumbTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));panel.addView(progress,lp(-1,28));progress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar b,int p,boolean u){if(BuildConfig.TV&&u)seekCurrent(p);}public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){seekCurrent(b.getProgress());}});
+        panel.setPadding(dp(8),dp(4),dp(8),dp(6));playerStatus=text("",12,0xffe0edf3);panel.addView(playerStatus);progress=new SeekBar(this);if(Build.VERSION.SDK_INT>=21){progress.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0x668faebb));progress.setThumbTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));}panel.addView(progress,lp(-1,28));progress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){
+            public void onProgressChanged(SeekBar b,int p,boolean user){
+                if(BuildConfig.TV&&!BuildConfig.MGV2000&&user)seekCurrent(p);
+            }
+            public void onStartTrackingTouch(SeekBar b){}
+            public void onStopTrackingTouch(SeekBar b){seekCurrent(b.getProgress());}
+        });
+        if(BuildConfig.MGV2000){
+            progress.setFocusable(true);
+            progress.setContentDescription("播放进度，左右键快退或快进 5 秒");
+            progress.setOnKeyListener((v,key,event)->{
+                if(key!=KeyEvent.KEYCODE_DPAD_LEFT&&key!=KeyEvent.KEYCODE_DPAD_RIGHT)return false;
+                if(event.getAction()==KeyEvent.ACTION_DOWN&&service!=null){
+                    service.seekRelative(key==KeyEvent.KEYCODE_DPAD_RIGHT?5000:-5000);
+                    updatePlayer();
+                }
+                return true;
+            });
+        }
         playerTime=text("",11,0xffe0edf3);panel.addView(playerTime);LinearLayout controls=row();controls.setGravity(Gravity.CENTER);playerLike=theaterIcon("♡","收藏当前歌曲",()->{if(currentSong()!=null)toggleSongFavorite(currentSong());});controls.addView(playerLike,new LinearLayout.LayoutParams(0,dp(56),1));playerRepeat=theaterIcon("循环","切换循环模式",()->{if(service!=null){service.repeat=(service.repeat+1)%3;updatePlayer();}});playerRepeat.setTextSize(11);controls.addView(playerRepeat,new LinearLayout.LayoutParams(0,dp(56),1));controls.addView(theaterIcon(BuildConfig.TV?"上一首":"|◀","上一首",this::previousTrack),new LinearLayout.LayoutParams(0,dp(56),1));playerPlay=theaterIcon("▶","播放或暂停",this::toggle);playerPlay.setTextSize(36);controls.addView(playerPlay,new LinearLayout.LayoutParams(0,dp(64),1));controls.addView(theaterIcon(BuildConfig.TV?"下一首":"▶|","下一首",this::nextTrack),new LinearLayout.LayoutParams(0,dp(56),1));controls.addView(theaterIcon(BuildConfig.TV?"队列":"☷","播放队列",this::showQueue),new LinearLayout.LayoutParams(0,dp(56),1));if(!BuildConfig.TV)controls.addView(theaterIcon("↓","下载到本地",this::downloadCurrent),new LinearLayout.LayoutParams(0,dp(56),1));if(BuildConfig.TV)controls.addView(theaterIcon("原唱/伴奏","切换原唱与伴奏",()->{if(service!=null)service.audioMode(service.audioMode().equals("original")?"accompaniment":"original");}),new LinearLayout.LayoutParams(0,dp(56),1));panel.addView(controls);lyricPreview=null;
     }
+    @android.annotation.TargetApi(21)
     void buildTouchTransport(LinearLayout panel){playerStatus=text("",12,0xffe0edf3);panel.addView(playerStatus);progress=new SeekBar(this);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));progress.setThumbTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));panel.addView(progress,lp(-1,28));progress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar b,int n,boolean u){}public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){seekCurrent(b.getProgress());}});playerTime=text("",12,0xffe0edf3);panel.addView(playerTime);LinearLayout auxiliary=row();playerLike=theaterIcon("♡","云端收藏",()->{if(currentSong()!=null)toggleSongFavorite(currentSong());});playerRepeat=theaterIcon("循环","播放模式",()->{if(service!=null){service.repeat=(service.repeat+1)%3;updatePlayer();}});playerRepeat.setTextSize(12);auxiliary.addView(playerLike,new LinearLayout.LayoutParams(0,dp(44),1));auxiliary.addView(playerRepeat,new LinearLayout.LayoutParams(0,dp(44),1));auxiliary.addView(theaterIcon("↓","下载",this::downloadCurrent),new LinearLayout.LayoutParams(0,dp(44),1));panel.addView(auxiliary);LinearLayout controls=row();controls.setGravity(Gravity.CENTER);controls.addView(theaterIcon("◀","上一首",this::previousTrack),new LinearLayout.LayoutParams(0,dp(64),1));playerPlay=theaterIcon("▶","播放暂停",this::toggle);playerPlay.setTextSize(34);playerPlay.setBackground(shape(0x33ffffff,40));controls.addView(playerPlay,lp(76,76));controls.addView(theaterIcon("▶|","下一首",this::nextTrack),new LinearLayout.LayoutParams(0,dp(64),1));controls.addView(theaterIcon("☷","队列",this::showQueue),lp(48,64));panel.addView(controls);}
     private LinearLayout lightControlRow;
     void fullLyricsControls(boolean full){if(BuildConfig.TV||lightControlRow==null)return;progress.setVisibility(full?View.GONE:View.VISIBLE);playerTime.setVisibility(full?View.GONE:View.VISIBLE);for(int i=0;i<lightControlRow.getChildCount();i++){View child=lightControlRow.getChildAt(i);LinearLayout.LayoutParams params=(LinearLayout.LayoutParams)child.getLayoutParams();params.height=dp(full?48:64);if(child==playerPlay)params.width=dp(full?48:64);child.setLayoutParams(params);}}
+    @android.annotation.TargetApi(21)
     void buildLightTransport(LinearLayout panel){
         panel.setPadding(dp(2),dp(8),dp(2),0);playerStatus=text("",12,MUTED);playerStatus.setVisibility(View.GONE);panel.addView(playerStatus);progress=new SeekBar(this);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(INK));progress.setThumbTintList(android.content.res.ColorStateList.valueOf(INK));panel.addView(progress,lp(-1,24));progress.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar b,int n,boolean u){}public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){seekCurrent(b.getProgress());}});playerTime=text("",11,MUTED);panel.addView(playerTime);LinearLayout controls=row();lightControlRow=controls;playerRepeat=touchControl("↻","播放模式",()->{if(service!=null){service.repeat=(service.repeat+1)%3;updatePlayer();}});controls.addView(playerRepeat,new LinearLayout.LayoutParams(0,dp(64),1));controls.addView(touchControl("|◀","上一首",()->skipTouch(false)),new LinearLayout.LayoutParams(0,dp(64),1));playerPlay=new MusicIconView(this,28);playerPlay.setText("▶");playerPlay.setTextColor(Color.WHITE);playerPlay.setGravity(Gravity.CENTER);playerPlay.setBackground(shape(0xff10191e,32));playerPlay.setContentDescription("播放或暂停");playerPlay.setOnClickListener(v->toggle());controls.addView(playerPlay,lp(64,64));controls.addView(touchControl("▶|","下一首",()->skipTouch(true)),new LinearLayout.LayoutParams(0,dp(64),1));controls.addView(touchControl("☷","播放队列",this::showQueue),new LinearLayout.LayoutParams(0,dp(64),1));playerLike=touchControl("♡","收藏",()->{if(currentSong()!=null)toggleSongFavorite(currentSong());});playerLike.setVisibility(View.GONE);panel.addView(playerLike);panel.addView(controls);lyricPreview=null;
     }
+    @android.annotation.TargetApi(21)
     void tintTabletTransport(LinearLayout panel){if(getResources().getConfiguration().screenWidthDp>getResources().getConfiguration().screenHeightDp){LinearLayout.LayoutParams centered=new LinearLayout.LayoutParams(dp(600),dp(72));centered.gravity=Gravity.CENTER_HORIZONTAL;lightControlRow.setLayoutParams(centered);}tintTabletViews(panel);progress.setProgressTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));progress.setThumbTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));progress.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(0x55ffffff));playerPlay.setBackground(shape(0x22ffffff,40));playerPlay.setTextColor(Color.WHITE);playerTime.setTextColor(0xffe4e9e9);}
     private void tintTabletViews(View view){if(view instanceof TextView)((TextView)view).setTextColor(Color.WHITE);if(view instanceof ViewGroup){ViewGroup group=(ViewGroup)view;for(int i=0;i<group.getChildCount();i++)tintTabletViews(group.getChildAt(i));}}
     Song currentSong(){return service==null?null:service.current();}
     int currentPosition(){return service==null?0:service.position();}
     int currentDuration(){return service==null?0:service.duration();}
+    boolean playbackSeeking(){return BuildConfig.MGV2000&&service!=null&&service.seeking();}
     void seekCurrent(int position){if(service!=null)service.seek(position);}
+    private AlertDialog recognitionDialog;
+    void recognizeSong(){
+        if(BuildConfig.TV||recognitionDialog!=null)return;
+        if(checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)!=android.content.pm.PackageManager.PERMISSION_GRANTED){
+            requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO},72);
+            return;
+        }
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("听歌识曲")
+            .setMessage("将录制约 8 秒环境声音，并发送给酷狗识别。").setNegativeButton("取消",null)
+            .setPositiveButton("开始录音",(d,w)->captureSong()).create();
+        recognitionDialog=dialog;
+        dialog.setOnDismissListener(d->{if(recognitionDialog==dialog)recognitionDialog=null;});
+        dialog.show();
+    }
+    private void captureSong(){
+        java.util.concurrent.atomic.AtomicBoolean cancelled=new java.util.concurrent.atomic.AtomicBoolean();
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("听歌识曲")
+            .setMessage("正在听，请把设备靠近声源…").setNegativeButton("取消",null).create();
+        recognitionDialog=dialog;
+        dialog.setOnDismissListener(d->{cancelled.set(true);if(recognitionDialog==dialog)recognitionDialog=null;});
+        dialog.show();
+        new Thread(()->{
+            try{
+                byte[] audio=SongRecognition.capture(cancelled);
+                if(cancelled.get())return;
+                main.post(()->{if(!cancelled.get())dialog.setMessage("正在识别并匹配曲库…");});
+                List<Song> matches=repo.recognize(audio);
+                main.post(()->{
+                    if(cancelled.get()||isDestroyed())return;
+                    dialog.dismiss();
+                    if(matches.isEmpty()){toast("没有匹配歌曲，请靠近声源重试");return;}
+                    String[] labels=new String[matches.size()];
+                    for(int i=0;i<matches.size();i++)labels[i]=matches.get(i).title+" · "+matches.get(i).artist;
+                    new AlertDialog.Builder(this).setTitle("识曲结果 · 点击播放")
+                        .setItems(labels,(d,i)->play(matches,i)).setNegativeButton("关闭",null).show();
+                });
+            }catch(Exception error){main.post(()->{
+                if(cancelled.get()||isDestroyed())return;
+                dialog.dismiss();toast(error.getMessage()==null?"识曲失败，请重试":error.getMessage());
+            });}
+        },"Echo-Recognition").start();
+    }
+    void sleepTimer(){
+        if(BuildConfig.TV||service==null)return;
+        long remaining=service.sleepRemaining();
+        int[] minutes={15,30,45,60,90,0};
+        new AlertDialog.Builder(this)
+            .setTitle(remaining>0?"定时关闭 · 还剩 "+((remaining+59999)/60000)+" 分钟":"定时关闭")
+            .setItems(new String[]{"15 分钟","30 分钟","45 分钟","60 分钟","90 分钟","取消定时"},(d,which)->{
+                if(service==null)return;
+                service.sleepMinutes(minutes[which]);
+                toast(minutes[which]==0?"已取消定时":"将在 "+minutes[which]+" 分钟后停止播放");
+            }).setNegativeButton("返回",null).show();
+    }
+    void playbackQuality(){
+        if(BuildConfig.TV)return;
+        android.content.SharedPreferences prefs=getSharedPreferences("echo",0);
+        String[] qualities={"128","320","flac"};
+        int selected=Arrays.asList(qualities).indexOf(prefs.getString("playback_quality","128"));
+        new AlertDialog.Builder(this).setTitle("在线播放音质")
+            .setSingleChoiceItems(new String[]{"标准 · 128 kbps","高音质 · 320 kbps","无损 · FLAC"},selected,(d,which)->{
+                prefs.edit().putString("playback_quality",qualities[which]).apply();
+                if(service!=null&&selected!=which)service.changeQuality();
+                d.dismiss();
+            }).setNegativeButton("返回",null).show();
+    }
+    void localAudio(){
+        if(BuildConfig.TV)return;
+        String permission=Build.VERSION.SDK_INT>=33?"android.permission.READ_MEDIA_AUDIO":"android.permission.READ_EXTERNAL_STORAGE";
+        if(Build.VERSION.SDK_INT>=23&&checkSelfPermission(permission)!=android.content.pm.PackageManager.PERMISSION_GRANTED){
+            requestPermissions(new String[]{permission},71);
+            return;
+        }
+        io.execute(()->{
+            List<Song> songs=new ArrayList<>(repo.saved("local"));
+            Uri base=android.provider.MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
+            try(Cursor cursor=getContentResolver().query(base,new String[]{"_id","title","artist","album","duration"},null,null,"title COLLATE NOCASE")){
+                while(cursor!=null&&cursor.moveToNext()){
+                    String uri=ContentUris.withAppendedId(base,cursor.getLong(0)).toString();
+                    String artist=cursor.getString(2);
+                    songs.add(new Song(uri,cursor.getString(1),artist==null||"<unknown>".equals(artist)?"本地音频":artist,
+                        cursor.getString(3)==null?"":cursor.getString(3),"","",uri,"","",cursor.getInt(4)));
+                }
+            }catch(Exception e){main.post(()->{if(!isDestroyed())toast("无法读取本地音频");});return;}
+            main.post(()->{if(!isDestroyed())showLocalAudio(songs);});
+        });
+    }
+    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] results){
+        super.onRequestPermissionsResult(requestCode,permissions,results);
+        if(requestCode==72){
+            if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)recognizeSong();
+            else toast("听歌识曲需要麦克风权限");
+        }
+        if(requestCode==71){
+            if(results.length>0&&results[0]==android.content.pm.PackageManager.PERMISSION_GRANTED)localAudio();
+            else toast("授权后可检索设备上的音频");
+        }
+    }
+    private void showLocalAudio(List<Song> songs){
+        LinearLayout panel=col();pad(panel,16);
+        EditText search=new EditText(this);search.setSingleLine(true);search.setHint("搜索本地歌名或歌手");panel.addView(search);
+        ListView list=new ListView(this);panel.addView(list,lp(-1,Math.min(dp(440),getResources().getDisplayMetrics().heightPixels/2)));
+        List<Song> visible=new ArrayList<>();
+        ArrayAdapter<String> adapter=new ArrayAdapter<>(this,android.R.layout.simple_list_item_1,new ArrayList<>());
+        list.setAdapter(adapter);
+        Runnable filter=()->{
+            String query=search.getText().toString().trim().toLowerCase(Locale.ROOT);
+            visible.clear();adapter.setNotifyOnChange(false);adapter.clear();
+            for(Song song:songs)if((song.title+" "+song.artist).toLowerCase(Locale.ROOT).contains(query)){
+                visible.add(song);adapter.add(song.title+" · "+song.artist);
+            }
+            adapter.notifyDataSetChanged();
+        };
+        filter.run();
+        search.addTextChangedListener(new android.text.TextWatcher(){
+            public void beforeTextChanged(CharSequence text,int start,int count,int after){}
+            public void onTextChanged(CharSequence text,int start,int before,int count){filter.run();}
+            public void afterTextChanged(android.text.Editable text){}
+        });
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(songs.isEmpty()?"本地音频 · 未找到文件":"本地音频")
+            .setView(panel).setNegativeButton("关闭",null).create();
+        list.setOnItemClickListener((parent,view,position,id)->{play(new ArrayList<>(visible),position);dialog.dismiss();});
+        dialog.show();
+    }
     void showLyrics(){lyricsPanel.open();}
     void importLyrics(){Song selected=currentSong();if(selected==null){toast("先选择一首歌");return;}pendingLyricImport=selected;Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT);intent.addCategory(Intent.CATEGORY_OPENABLE);intent.setType("*/*");startActivityForResult(intent,12);}
     void showQueue(){if(!BuildConfig.TV){showTouchQueue();return;}
@@ -335,11 +489,21 @@ public class MainActivity extends Activity {
         lyricsPanel.track(song);if(lyricPreview!=null)lyricPreview.setText(lyricsPanel.preview());
         if(!BuildConfig.TV&&miniCover!=null&&song!=null&&!song.key().equals(miniCoverKey)){miniCoverKey=song.key();miniCover.removeAllViews();miniCover.addView(HandheldHome.cover(this,artworkLoader,song,44),new FrameLayout.LayoutParams(-1,-1));}if(!BuildConfig.TV&&miniLike!=null){miniLike.setText(song!=null&&repo.favorite(song)?"♥":"♡");miniLike.setTextColor(song!=null&&repo.favorite(song)?0xffee6277:INK);}if(playbackPeek!=null&&peekTitle!=null){peekTitle.setText(HandheldHome.name(name));peekArtist.setText(song==null?"":song.artist);peekLine.setText(lyricsPanel.preview());peekPlay.setText(playing?"Ⅱ":"▶");peekLike.setText(song!=null&&repo.favorite(song)?"♥":"♡");peekLike.setTextColor(song!=null&&repo.favorite(song)?0xffee6277:INK);if(!peekProgress.isPressed()){peekProgress.setMax(Math.max(1,currentDuration()));peekProgress.setProgress(currentPosition());}peekTime.setText(time(currentPosition())+" / "+time(currentDuration()));artworkLoader.bind(peekArt,peekPlaceholder,song);}
         if(miniTitle!=null){miniTitle.setText(HandheldHome.name(name));miniSubtitle.setText(subtitle);miniPlay.setText(playing?"Ⅱ":"▶");miniPlay.setContentDescription(playing?"暂停":"播放");}
-        if(playerTitle!=null){playerTitle.setText(BuildConfig.TV?name:HandheldHome.name(name));playerArtist.setText(song==null?"从音乐库或搜索中选择歌曲":song.artist);playerStatus.setText(service.loading()?"正在加载音频…":service.error());}if(playerPlay!=null){playerPlay.setText(BuildConfig.TV?(playing?"暂停":"播放"):(playing?"Ⅱ":"▶"));playerPlay.setContentDescription(playing?"暂停":"播放");playerLike.setText(BuildConfig.TV?(song!=null&&repo.favorite(song)?"已收藏":"收藏"):(song!=null&&repo.favorite(song)?"♥":song!=null&&!repo.favoriteKnown(song)?"♡·":"♡"));playerLike.setEnabled(!cloudMutation&&song!=null&&song.cloudIdentified());playerLike.setContentDescription("云端收藏");playerRepeat.setText(BuildConfig.TV?(service.repeat==0?"列表循环":service.repeat==1?"单曲循环":"随机播放"):(service.repeat==1?"↻₁":service.repeat==2?"⇄":"↻"));if(progress!=null&&!progress.isPressed()){progress.setMax(Math.max(service.duration(),1));progress.setProgress(service.position());}playerTime.setText(String.format(Locale.ROOT,"%s / %s",time(service.position()),time(service.duration())));}
+        if(playerTitle!=null){playerTitle.setText(BuildConfig.TV?name:HandheldHome.name(name));playerArtist.setText(song==null?"从音乐库或搜索中选择歌曲":song.artist);playerStatus.setText(service.loading()?"正在加载音频…":service.error());}if(playerPlay!=null){playerPlay.setText(BuildConfig.TV?(playing?"暂停":"播放"):(playing?"Ⅱ":"▶"));playerPlay.setContentDescription(playing?"暂停":"播放");playerLike.setText(BuildConfig.TV?(song!=null&&repo.favorite(song)?"已收藏":"收藏"):(song!=null&&repo.favorite(song)?"♥":song!=null&&!repo.favoriteKnown(song)?"♡·":"♡"));playerLike.setEnabled(!cloudMutation&&song!=null&&song.cloudIdentified());playerLike.setContentDescription("云端收藏");playerRepeat.setText(BuildConfig.TV?(service.repeat==0?"列表循环":service.repeat==1?"单曲循环":"随机播放"):(service.repeat==1?"↻₁":service.repeat==2?"⇄":"↻"));if(progress!=null&&!progress.isPressed()){progress.setMax(Math.max(service.duration(),1));progress.setProgress(BuildConfig.MGV2000?service.seekBarPosition():service.position());}playerTime.setText(String.format(Locale.ROOT,"%s / %s",time(service.position()),time(service.duration())));}
     }
     static String time(int ms){int s=Math.max(ms,0)/1000;return String.format(Locale.ROOT,"%d:%02d",s/60,s%60);}
     void hideKeyboard(View v){((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(v.getWindowToken(),0);v.clearFocus();}
-    @Override public boolean dispatchKeyEvent(KeyEvent event){if(BuildConfig.TV&&event.getAction()==KeyEvent.ACTION_DOWN){switch(event.getKeyCode()){case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:toggle();return true;case KeyEvent.KEYCODE_MEDIA_NEXT:nextTrack();return true;case KeyEvent.KEYCODE_MEDIA_PREVIOUS:previousTrack();return true;default:break;}}return super.dispatchKeyEvent(event);}
+    boolean handleTvSeekKey(KeyEvent event){
+        if(!BuildConfig.MGV2000)return false;
+        int key=event.getKeyCode();
+        if(key!=KeyEvent.KEYCODE_MEDIA_FAST_FORWARD&&key!=KeyEvent.KEYCODE_MEDIA_REWIND)return false;
+        if(event.getAction()==KeyEvent.ACTION_DOWN&&service!=null){
+            service.seekRelative(key==KeyEvent.KEYCODE_MEDIA_FAST_FORWARD?5000:-5000);
+            updatePlayer();
+        }
+        return true;
+    }
+    @Override public boolean dispatchKeyEvent(KeyEvent event){if(handleTvSeekKey(event))return true;if(BuildConfig.TV&&event.getAction()==KeyEvent.ACTION_DOWN){switch(event.getKeyCode()){case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:toggle();return true;case KeyEvent.KEYCODE_MEDIA_NEXT:nextTrack();return true;case KeyEvent.KEYCODE_MEDIA_PREVIOUS:previousTrack();return true;default:break;}}return super.dispatchKeyEvent(event);}
     @Override public void onBackPressed(){if(BuildConfig.TV){if(page!=2){++request;busy=false;page=2;render();}else super.onBackPressed();return;}if(page==4||page==5||page==6||page==7||page==8){++request;busy=false;page=2;render();}else if(page!=0){++request;busy=false;page=0;render();}else super.onBackPressed();}
 }
 

@@ -13,6 +13,7 @@ import android.widget.*;
 import java.util.concurrent.*;
 
 /** A single, permission-gated top lyric window owned by the existing media service. */
+@android.annotation.TargetApi(23)
 final class StatusLyrics {
     private final PlaybackService service;
     private final MusicRepository repo;

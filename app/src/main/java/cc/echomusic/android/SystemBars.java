@@ -12,7 +12,7 @@ final class SystemBars {
         apply(window,0xff213e52,false);
     }
     private static void apply(Window window,int color,boolean darkIcons){
-        if(window==null)return;
+        if(window==null||Build.VERSION.SDK_INT<21)return;
         // PhoneWindow.getInsetsController() dereferences its decor without creating it.
         // Install decor first, including callers which run before setContentView().
         View decor=window.getDecorView();

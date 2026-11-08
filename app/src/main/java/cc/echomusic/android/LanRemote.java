@@ -20,6 +20,7 @@ final class LanRemote implements AutoCloseable {
     private final LinkedHashMap<String,CloudEntry> cloudLists=new LinkedHashMap<>();
     private static final class CloudEntry {final List<Song> songs;final AuthStore.Scope scope;final long created=System.currentTimeMillis();CloudEntry(List<Song> songs,AuthStore.Scope scope){this.songs=songs;this.scope=scope;}}
     private volatile String lyricKey="";private volatile Lyrics.Document document;private volatile boolean lyricLoading;private volatile boolean closed;
+    private long lyricRetryAt;
     private static final class Entry {final Song song;final AuthStore.Scope scope;final long created=System.currentTimeMillis();Entry(Song song,AuthStore.Scope scope){this.song=song;this.scope=scope;}}
     LanRemote(PlaybackService player)throws Exception{this.player=player;repo=new MusicRepository(player);artwork=new ArtworkLoader(player,repo,background);byte[] random=new byte[16];new SecureRandom().nextBytes(random);StringBuilder hex=new StringBuilder();for(byte b:random)hex.append(String.format(Locale.ROOT,"%02x",b&255));token=hex.toString();try(InputStream input=player.getAssets().open("remote/index.html");ByteArrayOutputStream output=new ByteArrayOutputStream()){byte[] buffer=new byte[8192];int count;while((count=input.read(buffer))!=-1)output.write(buffer,0,count);html=output.toByteArray();}try{server=new LanHttpServer(1987,token,this::handle);}catch(java.net.BindException occupied){server=new LanHttpServer(0,token,this::handle);}}
     String addresses(){StringBuilder text=new StringBuilder();try{Enumeration<NetworkInterface> interfaces=NetworkInterface.getNetworkInterfaces();while(interfaces.hasMoreElements()){NetworkInterface network=interfaces.nextElement();if(!network.isUp())continue;Enumeration<InetAddress> addresses=network.getInetAddresses();while(addresses.hasMoreElements()){InetAddress ip=addresses.nextElement();if(ip instanceof Inet4Address&&!ip.isLoopbackAddress()&&LanHttpServer.privatePeer(ip)){if(text.length()>0)text.append('\n');text.append("http://").append(ip.getHostAddress()).append(':').append(server.port()).append("/");}}}}catch(Exception ignored){}return text.length()==0?"请连接家庭 Wi-Fi 或有线局域网":text.toString();}
@@ -48,14 +49,58 @@ final class LanRemote implements AutoCloseable {
                 return json(ok().put("songs",songs).put("total",entry.songs.size()).put("offset",offset).put("hasMore",offset+songs.length()<entry.songs.size()));
             }
             if(method.equals("GET")&&path.equals("/api/info"))return json(ok().put("version","android-0.10.0").put("port",server.port()));
-            if(method.equals("GET")&&path.equals("/api/state"))return json(ui(()->{Song song=player.current();JSONObject state=new JSONObject().put("serverTime",System.currentTimeMillis()).put("volume",player.remoteVolume()).put("audioMode",player.audioMode()).put("audioLoading",player.loading()).put("audioError",player.error()).put("playMode",player.remoteMode()).put("accentColor","#A5F2F3").put("isDark",true);JSONObject playback=null;if(song!=null)playback=new JSONObject().put("trackId",song.key()).put("title",song.title).put("artist",song.artist).put("album",song.album).put("duration",player.duration()/1000d).put("currentTime",player.position()/1000d).put("updatedAt",System.currentTimeMillis()).put("isPlaying",player.playing()).put("playbackRate",player.remoteRate()).put("isFavorite",repo.favorite(song));return state.put("playback",playback==null?JSONObject.NULL:playback);}));
+            if(method.equals("GET")&&path.equals("/api/state"))return json(ui(()->{Song song=player.current();JSONObject state=new JSONObject().put("serverTime",System.currentTimeMillis()).put("volume",player.remoteVolume()).put("audioMode",player.audioMode()).put("audioLoading",player.loading()).put("audioError",player.error()).put("playMode",player.remoteMode()).put("accentColor","#A5F2F3").put("isDark",true);if(BuildConfig.MGV2000)state.put("seeking",player.seeking()).put("seekRevision",player.seekRevision());JSONObject playback=null;if(song!=null)playback=new JSONObject().put("trackId",song.key()).put("title",song.title).put("artist",song.artist).put("album",song.album).put("duration",player.duration()/1000d).put("currentTime",player.position()/1000d).put("updatedAt",System.currentTimeMillis()).put("isPlaying",player.playing()).put("playbackRate",player.remoteRate()).put("isFavorite",repo.favorite(song));return state.put("playback",playback==null?JSONObject.NULL:playback);}));
             if(method.equals("GET")&&path.equals("/api/search")){String keyword=query.getOrDefault("keywords","").trim();if(keyword.isEmpty()||keyword.length()>100)throw new IOException("请输入 1–100 个字的关键词");int page=integer(query.get("page"),1,100);AuthStore.Scope scope=repo.auth.scope();List<Song> songs=repo.search(keyword,page);if(!repo.auth.current(scope))throw new IOException("账号已变化，请重新搜索");JSONArray rows=new JSONArray();synchronized(searches){for(Song song:songs){if(song.local())continue;String id=song.key();searches.put(id,new Entry(song,scope));rows.put(brief(song,id));}while(searches.size()>150)searches.remove(searches.keySet().iterator().next());}return json(ok().put("page",page).put("songs",rows).put("hasMore",songs.size()>=30));}
             if(method.equals("GET")&&path.equals("/api/queue"))return json(ui(()->{List<Song> all=player.queue();int current=player.queueIndex();String currentId=player.current()==null?"":player.current().key();JSONObject result=ok().put("queueId",String.valueOf(player.queueRevision())).put("total",all.size()).put("currentIndex",current).put("currentTrackId",currentId);if(query.containsKey("meta"))return result.put("meta",true);int limit=integer(query.get("limit"),100,200);int offset=query.containsKey("around")?Math.max(0,current-limit/2):integer(query.get("offset"),0,1000000);JSONArray rows=new JSONArray();for(int index=offset;index<Math.min(all.size(),offset+limit);index++){Song song=all.get(index);rows.put(brief(song,song.key()).put("index",index).put("isCurrent",index==current));}return result.put("songs",rows).put("offset",offset).put("limit",limit).put("hasMore",offset+rows.length()<all.size()).put("hasPrev",offset>0).put("queue",new JSONObject().put("id",String.valueOf(player.queueRevision())).put("title","播放队列").put("songCount",all.size()));}));
-            if(method.equals("GET")&&path.equals("/api/lyric")){Song song=ui(player::current);if(song==null)return json(ok().put("hash","").put("total",0).put("lines",new JSONArray()));String key=song.key();if(!key.equals(lyricKey)){lyricKey=key;document=null;}if(document==null&&!lyricLoading){lyricLoading=true;background.execute(()->{try{String text=repo.cachedLyrics(song);if(text.isEmpty()&&!song.local())text=repo.fetchLyrics(song,null,song.durationMs);if(!closed&&key.equals(lyricKey))document=Lyrics.document(text);}catch(Exception ignored){}finally{lyricLoading=false;}});}Lyrics.Document doc=document;JSONObject result=ok().put("hash",key).put("timeOffset",repo.lyricOffset(song)).put("total",doc==null?0:doc.lines.size()).put("tips",doc==null?"歌词正在准备":"");if(query.containsKey("meta"))return json(result.put("meta",true));JSONArray lines=new JSONArray();if(doc!=null)for(Lyrics.Line line:doc.lines)lines.put(new JSONObject().put("time",line.millis/1000d).put("text",line.text).put("translated",line.translation));return json(result.put("lines",lines));}
-            if(method.equals("GET")&&path.equals("/api/cover")){Song song=ui(player::current);Bitmap image=song==null?null:artwork.load(song);if(image!=null){ByteArrayOutputStream bytes=new ByteArrayOutputStream();image.compress(Bitmap.CompressFormat.JPEG,80,bytes);return new LanHttpServer.Reply(200,"image/jpeg",bytes.toByteArray());}return LanHttpServer.Reply.text(200,"image/svg+xml","<svg xmlns='http://www.w3.org/2000/svg' width='500' height='500'><rect width='500' height='500' fill='#213e52'/><text x='250' y='300' font-size='160' text-anchor='middle' fill='#a5f2f3'>♫</text></svg>");}
+            if(method.equals("GET")&&path.equals("/api/lyric"))return json(lyrics(ui(player::current),query.containsKey("meta")));
+            if(method.equals("GET")&&path.equals("/api/cover")){Song song=ui(player::current);Bitmap image=null;try{if(song!=null)image=artwork.load(song);}catch(Exception unavailable){android.util.Log.d("EchoRemote","Cover unavailable");}if(image!=null){ByteArrayOutputStream bytes=new ByteArrayOutputStream();image.compress(Bitmap.CompressFormat.JPEG,80,bytes);return new LanHttpServer.Reply(200,"image/jpeg",bytes.toByteArray());}return LanHttpServer.Reply.text(200,"image/svg+xml","<svg xmlns='http://www.w3.org/2000/svg' width='500' height='500'><rect width='500' height='500' fill='#213e52'/><text x='250' y='300' font-size='160' text-anchor='middle' fill='#a5f2f3'>♫</text></svg>");}
             if(method.equals("POST")&&path.equals("/api/command")){JSONObject command=new JSONObject(body);return json(ui(()->command(command)));}
             return LanHttpServer.Reply.text(404,"text/plain","Not found");
         }catch(Exception error){return json(new JSONObject().put("ok",false).put("error",error instanceof IOException?error.getMessage():"操作未完成，请在应用内检查登录或播放状态"));}
+    }
+    private synchronized JSONObject lyrics(Song song,boolean meta)throws JSONException{
+        if(song==null)return ok().put("hash","").put("total",0).put("lines",new JSONArray());
+        String key=song.key();
+        if(!key.equals(lyricKey)){lyricKey=key;document=null;lyricRetryAt=0;}
+        if(document==null&&!lyricLoading&&android.os.SystemClock.elapsedRealtime()>=lyricRetryAt){
+            lyricLoading=true;
+            background.execute(()->{
+                Lyrics.Document loaded=null;
+                try{
+                    String raw=repo.cachedLyrics(song);
+                    if(raw.isEmpty()&&!song.local())raw=repo.fetchLyrics(song,null,song.durationMs);
+                    loaded=Lyrics.document(raw);
+                }catch(Exception ignored){}
+                finally{
+                    synchronized(this){
+                        if(!closed&&key.equals(lyricKey)){
+                            document=loaded;
+                            lyricRetryAt=loaded==null&&BuildConfig.MGV2000?android.os.SystemClock.elapsedRealtime()+30000:0;
+                        }
+                        lyricLoading=false;
+                    }
+                }
+            });
+        }
+        Lyrics.Document doc=document;
+        String tips=doc==null?(lyricRetryAt>0?"歌词获取失败，稍后自动重试":"歌词正在准备"):"";
+        JSONObject result=ok().put("hash",key).put("timeOffset",BuildConfig.MGV2000?-repo.lyricOffset(song):repo.lyricOffset(song))
+            .put("total",doc==null?0:doc.lines.size()).put("tips",tips);
+        if(BuildConfig.MGV2000)result.put("lyricRate",repo.lyricSpeed(song)/100d);
+        if(meta)return result.put("meta",true);
+        JSONArray lines=new JSONArray();
+        if(doc!=null)for(Lyrics.Line line:doc.lines){
+            JSONObject row=new JSONObject().put("time",line.millis/1000d)
+                .put("text",line.text).put("translated",line.translation);
+            if(!line.words.isEmpty()){
+                JSONArray words=new JSONArray();
+                for(Lyrics.Word word:line.words)words.put(new JSONArray().put(word.from).put(word.to)
+                    .put(word.start/1000d).put(word.end/1000d));
+                row.put("words",words);
+            }
+            lines.put(row);
+        }
+        return result.put("lines",lines);
     }
     private JSONObject command(JSONObject command)throws Exception{String action=command.optString("action");switch(action){case "audioMode":player.audioMode(command.optString("mode"));break;case "toggle":player.toggle();break;case "play":player.resume();break;case "pause":player.pause();break;case "next":player.next();break;case "prev":player.previous();break;case "seek":player.seek((int)(number(command,"time",0,86400)*1000));break;case "volume":player.remoteVolume((int)number(command,"volume",0,100));break;case "playMode":player.remoteMode(command.optString("mode"));break;case "rate":player.remoteRate((float)number(command,"rate",.5,3));break;
         case "cloudPlay":{CloudEntry entry;synchronized(cloudLists){entry=cloudLists.get(command.optString("playlistId"));}int at=command.optInt("index",-1);if(entry==null||System.currentTimeMillis()-entry.created>300000||!repo.auth.current(entry.scope))throw new IOException("歌单已过期或账号已变化，请重新打开歌单");if(at<0||at>=entry.songs.size())throw new IOException("歌曲位置已变化，请刷新");player.play(new ArrayList<>(entry.songs),at);break;}
