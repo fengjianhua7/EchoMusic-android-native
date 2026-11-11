@@ -16,7 +16,7 @@ android {
     signingConfigs { handheldOriginal { initWith debug; def originalKey = new File(System.getProperty('user.home'), '.android/debug.keystore'); if(originalKey.exists()) storeFile originalKey } }
     flavorDimensions 'device'
     productFlavors {
-        handheld { signingConfig signingConfigs.handheldOriginal; versionCode 25; versionName '0.11.8-android'; dimension 'device'; buildConfigField 'boolean', 'TV', 'false'; ndk { abiFilters 'arm64-v8a', 'x86_64' } }
+        handheld { signingConfig signingConfigs.handheldOriginal; versionCode 29; versionName '0.12.2-android'; dimension 'device'; buildConfigField 'boolean', 'TV', 'false'; ndk { abiFilters 'arm64-v8a', 'x86_64' } }
         tvLegacy { minSdk 19; versionCode 28; versionName '0.10.15-android'; buildConfigField 'boolean', 'MGV2000', 'true'; multiDexEnabled true; dimension 'device'; applicationIdSuffix '.tv.legacy'; versionNameSuffix '-tv-api19'; buildConfigField 'boolean', 'TV', 'true'; buildConfigField 'boolean', 'NODE_MOBILE', 'false' }
         tv32 { minSdk 23; dimension 'device'; applicationIdSuffix '.tv'; versionNameSuffix '-tv-armv7'; buildConfigField 'boolean', 'TV', 'true'; buildConfigField 'boolean', 'NODE_MOBILE', 'true'; ndk { abiFilters 'armeabi-v7a' } }
         tv { dimension 'device'; applicationIdSuffix '.tv'; versionNameSuffix '-tv'; buildConfigField 'boolean', 'TV', 'true'; ndk { abiFilters 'arm64-v8a' } }

@@ -99,3 +99,37 @@ test('original cloud add/delete modules receive catalog payload and playlist fil
     response=await fetch(base+'/playlist/tracks/del?listid=5&fileids=9090',{headers:credential});assert.equal((await response.json()).status,1);assert.equal(captured[1].data.data[0].fileid,9090);assert.equal(captured[1].data.userid,'123');
   });
 });
+
+test('discovery and cloud disk requests reach the intended modules',async()=>{
+  const f=fixture();
+  await connection(f,async(base)=>{
+    const credential={...headers,Authorization:'token=fixture;userid=123'};
+    assert.equal((await fetch(base+'/top/playlist?category_id=42',{headers})).status,200);
+    assert.equal(f.calls[0].name,'top_playlist');
+    assert.equal(f.calls[0].params.category_id,'42');
+    assert.equal((await fetch(base+'/user/cloud?page=2&pagesize=60',{headers:credential})).status,200);
+    assert.equal(f.calls[1].name,'user_cloud');
+    assert.equal(f.calls[1].params.page,2);
+    assert.equal(f.calls[1].params.pagesize,60);
+    assert.equal(f.calls[1].params.cookie.userid,'123');
+  });
+});
+
+test('cloud disk upload requires an account and sends only the selected binary body',async()=>{
+  const f=fixture({user_cloud_upload:()=>({status:200,body:{status:1,uploadInfo:{authorization:'private'}}})});
+  await connection(f,async(base)=>{
+    const url=base+'/user/cloud/upload?name=test.flac&extendname=flac';
+    const data=Buffer.from([1,2,3]);
+    const binary={...headers,'Content-Type':'application/octet-stream'};
+    const credential={...binary,Authorization:'token=fixture;userid=123'};
+    assert.equal((await fetch(url,{headers:credential})).status,400);
+    assert.equal((await fetch(url,{method:'POST',headers:binary,body:data})).status,401);
+    assert.equal((await fetch(url,{method:'POST',headers:credential,body:Buffer.alloc(0)})).status,400);
+    const response=await fetch(url,{method:'POST',headers:credential,body:data});
+    assert.equal(response.status,200);
+    assert.equal((await response.json()).uploadInfo,undefined);
+    assert.equal(f.calls.length,1);
+    assert.deepEqual(f.calls[0].params.data,data);
+    assert.equal(f.calls[0].params.extendname,'flac');
+  });
+});

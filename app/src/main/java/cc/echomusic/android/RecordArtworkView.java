@@ -9,8 +9,11 @@ import android.widget.*;
 final class RecordArtworkView extends FrameLayout {
     final ImageView image;
     final TextView placeholder;
-    RecordArtworkView(Context context){
+    private final int maxSize;
+    RecordArtworkView(Context context){this(context,460);}
+    RecordArtworkView(Context context,int maxDp){
         super(context);
+        maxSize=Math.round(Math.max(1,maxDp)*getResources().getDisplayMetrics().density);
         setBackgroundColor(0xffdde4e8);
         setOutlineProvider(new ViewOutlineProvider(){
             @Override public void getOutline(View view,Outline outline){
@@ -27,8 +30,7 @@ final class RecordArtworkView extends FrameLayout {
         addView(placeholder,new LayoutParams(-1,-1));
     }
     @Override protected void onMeasure(int width,int height){
-        int max=Math.round(460*getResources().getDisplayMetrics().density);
-        int size=Math.min(max,Math.min(MeasureSpec.getSize(width),MeasureSpec.getSize(height)));
+        int size=Math.min(maxSize,Math.min(MeasureSpec.getSize(width),MeasureSpec.getSize(height)));
         int spec=MeasureSpec.makeMeasureSpec(size,MeasureSpec.EXACTLY);
         super.onMeasure(spec,spec);
     }

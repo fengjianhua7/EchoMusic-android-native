@@ -6,6 +6,25 @@ import java.util.*;
 public final class Song {
     public final String id,title,artist,album,hash,albumId,source,mixId,fileId,cover;
     public final int durationMs;
+    private String cloudDiskKey="", cloudDiskId="", cloudDiskName="", cloudDiskAudio="", cloudDiskAlbumAudio="";
+    boolean cloudDisk(){return !cloudDiskKey.isEmpty();}
+    String cloudDiskKey(){return cloudDiskKey;}
+    String cloudDiskId(){return cloudDiskId;}
+    String cloudDiskAudio(){return cloudDiskAudio;}
+    String cloudDiskAlbumAudio(){return cloudDiskAlbumAudio;}
+    String cloudDiskName(){return cloudDiskName;}
+    static Song cloudDisk(JSONObject raw,String account){
+        Song song=fromJson(raw);
+        JSONObject audio=raw.optJSONObject("audio_info");
+        song.cloudDiskId=positiveText(raw,"kv_id","kvid","cloud_file_id");
+        song.cloudDiskKey=account;
+        song.cloudDiskName=text(raw,"name","audio_name","filename","ori_audio_name");
+        song.cloudDiskAudio=positiveText(raw,"audio_id","audioid");
+        if(song.cloudDiskAudio.isEmpty())song.cloudDiskAudio=positiveText(audio,"audio_id","audioid");
+        song.cloudDiskAlbumAudio=positiveText(raw,"album_audio_id","mixsongid");
+        if(song.cloudDiskAlbumAudio.isEmpty())song.cloudDiskAlbumAudio=positiveText(audio,"album_audio_id","mixsongid");
+        return song;
+    }
     private final Set<String> identities=new LinkedHashSet<>();
     public Set<String> identities(){return Collections.unmodifiableSet(identities);}
     private void addHash(String value){if(value!=null&&value.matches("[a-fA-F0-9]{32}"))identities.add("h:"+value.toLowerCase(Locale.ROOT));}
@@ -37,12 +56,15 @@ public final class Song {
         Song song=new Song(id,title.isEmpty()?"未知歌曲":title,artist,album,hash,albumId,source,mix,file,(int)Math.min(Integer.MAX_VALUE,Math.max(0,duration)),cover);
         for(JSONObject object:new JSONObject[]{o,info})if(object!=null){for(String key:new String[]{"hash","Hash","FileHash","filehash","hash_128","hash_320","hash_flac","HQFileHash","SQFileHash","ResFileHash"})song.addHash(text(object,key));for(String key:new String[]{"mixId","mixSongId","MixSongID","MixSongId","mixsongid","mixsong_id","album_audio_id","audio_id"})song.addMix(positiveText(object,key));}
         JSONArray aliases=o.optJSONArray("cloudIdentityKeys");if(aliases!=null)for(int i=0;i<aliases.length();i++){String value=aliases.optString(i);if(value.startsWith("h:"))song.addHash(value.substring(2));if(value.startsWith("m:"))song.addMix(value.substring(2));}
+        song.cloudDiskKey=text(o,"cloudDiskKey");song.cloudDiskId=text(o,"cloudDiskId");
+        song.cloudDiskName=text(o,"cloudDiskName");song.cloudDiskAudio=text(o,"cloudDiskAudio");
+        song.cloudDiskAlbumAudio=text(o,"cloudDiskAlbumAudio");
         return song;
     }
-    public JSONObject json(){JSONObject o=new JSONObject();try{o.put("id",id);o.put("title",title);o.put("artist",artist);o.put("album",album);o.put("hash",hash);o.put("albumId",albumId);o.put("source",source);o.put("mixId",mixId);o.put("fileId",fileId);o.put("durationMs",durationMs);o.put("cover",cover);o.put("cloudIdentityKeys",new JSONArray(identities));}catch(JSONException ignored){}return o;}
+    public JSONObject json(){JSONObject o=new JSONObject();try{o.put("id",id);o.put("title",title);o.put("artist",artist);o.put("album",album);o.put("hash",hash);o.put("albumId",albumId);o.put("source",source);o.put("mixId",mixId);o.put("fileId",fileId);o.put("durationMs",durationMs);o.put("cover",cover);o.put("cloudIdentityKeys",new JSONArray(identities));if(cloudDisk()){o.put("cloudDiskKey",cloudDiskKey);o.put("cloudDiskId",cloudDiskId);o.put("cloudDiskName",cloudDiskName);o.put("cloudDiskAudio",cloudDiskAudio);o.put("cloudDiskAlbumAudio",cloudDiskAlbumAudio);}}catch(JSONException ignored){}return o;}
     public boolean cloudIdentified(){return !identities.isEmpty();}
     public Song cloudSong(){if(!local())return this;Song remote=new Song(id,title,artist,album,hash,albumId,"",mixId,fileId,durationMs,cover);remote.identities.addAll(identities);return remote;}
-    public String key(){return source.isEmpty()?(hash.isEmpty()?(mixId.isEmpty()?"":"m:"+mixId):hash.toLowerCase(Locale.ROOT)):source;}
+    public String key(){return !local()&&cloudDisk()?"disk:"+cloudDiskKey+":"+(cloudDiskId.isEmpty()?hash:cloudDiskId):source.isEmpty()?(hash.isEmpty()?(mixId.isEmpty()?"":"m:"+mixId):hash.toLowerCase(Locale.ROOT)):source;}
     public boolean local(){return !source.isEmpty();}
-    public static boolean same(Song a,Song b){if(a.local()||b.local())return a.key().equals(b.key());return !Collections.disjoint(a.identities,b.identities);}
+    public static boolean same(Song a,Song b){if(a.local()||b.local()||a.cloudDisk()||b.cloudDisk())return a.key().equals(b.key());return !Collections.disjoint(a.identities,b.identities);}
 }

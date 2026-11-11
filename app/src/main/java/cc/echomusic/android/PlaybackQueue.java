@@ -9,6 +9,12 @@ public final class PlaybackQueue<T> {
     public void replace(List<T> songs,int at){items.clear();items.addAll(songs);index=items.isEmpty()?-1:Math.max(0,Math.min(at,items.size()-1));revision++;}
     public boolean select(int at,long expected){if(expected!=revision||at<0||at>=items.size())return false;index=at;revision++;return true;}
     public void select(int at){if(at>=0&&at<items.size()){index=at;revision++;}}
+    public void appendAll(List<T> incoming){
+        if(incoming.isEmpty())return;
+        items.addAll(incoming);
+        if(index<0)index=0;
+        revision++;
+    }
     public void append(T item){items.add(item);if(index<0)index=0;revision++;}
     public void insertNext(T item){if(index<0){append(item);return;}items.add(index+1,item);revision++;}
     public boolean remove(int at,long expected){if(expected!=revision||at<0||at>=items.size())return false;boolean selected=at==index;items.remove(at);if(items.isEmpty())index=-1;else if(at<index)index--;else if(index>=items.size())index=0;revision++;return selected;}

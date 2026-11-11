@@ -17,6 +17,13 @@ public class PlaybackService extends Service {
     private final Handler main=new Handler(Looper.getMainLooper());
     private final ExecutorService io=Executors.newSingleThreadExecutor();
     private MusicRepository repository;
+    private PlaybackCache cache;
+    private Runnable cacheRequest;
+    private ExecutorService notificationIo;
+    private ArtworkLoader notificationArt;
+    private android.graphics.Bitmap cover;
+    private String coverKey="",notificationLyric="";
+    private Future<?> coverJob;
     private MediaPlayer player;
     private MediaSession session;
     private AudioManager audio;
@@ -55,7 +62,13 @@ public class PlaybackService extends Service {
         IntentFilter filter=new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
         if(Build.VERSION.SDK_INT>=33)registerReceiver(noisy,filter,Context.RECEIVER_NOT_EXPORTED); else registerReceiver(noisy,filter);
         queue.replace(BuildConfig.TV?repository.saved("queue").stream().filter(song->!song.local()).collect(java.util.stream.Collectors.toList()):repository.saved("queue"),getSharedPreferences("echo",0).getInt("queue_index",0));
-        if(!BuildConfig.TV)statusLyrics=new StatusLyrics(this,repository);publish();if(getSharedPreferences("echo",0).getBoolean("remote_enabled_v1",false))setRemoteEnabled(true);
+        if(!BuildConfig.TV){
+            cache=PlaybackCache.get(this);
+            notificationIo=Executors.newSingleThreadExecutor();
+            notificationArt=new ArtworkLoader(this,repository,notificationIo);
+            statusLyrics=new StatusLyrics(this,repository);
+        }
+        publish();if(getSharedPreferences("echo",0).getBoolean("remote_enabled_v1",false))setRemoteEnabled(true);
     }
     private final BroadcastReceiver noisy=new BroadcastReceiver(){public void onReceive(Context c,Intent i){pause();}};
     @android.annotation.TargetApi(21)
@@ -111,6 +124,7 @@ public class PlaybackService extends Service {
     public long queueRevision(){return queue.revision();}
     public int queueIndex(){return queue.index();}
     public boolean playAt(int at,long expected){if(!queue.select(at,expected))return false;load();return true;}
+    void appendAll(List<Song> songs){queue.appendAll(songs);saveQueue();publish();}
     public void append(Song s){queue.append(s);saveQueue();publish();}
     public void insertNext(Song song){queue.insertNext(song);saveQueue();publish();}
     private void saveQueue(){repository.save("queue",queue.snapshot());getSharedPreferences("echo",0).edit().putInt("queue_index",queue.index()).apply();}
@@ -124,30 +138,76 @@ public class PlaybackService extends Service {
         foreground();publish();
         io.execute(()->{
             try {
-                MusicRepository.AudioSource resolved=repository.resolveAudio(song,accompaniment);String source=resolved.url;
+                CloudLibrary.Session<AuthStore.Scope> account=cache==null||song.local()||accompaniment?null:repository.cloud.session();
+                String quality=account==null?"":cache.quality(song);
+                MusicRepository.AudioSource resolved=resolveForPlayback(song,accompaniment,account,quality);
+                String source=resolved.url;
+                String cachedFallback=account==null||source.startsWith("file:")?"":cache.find(account.key,song,quality,true);
                 main.post(()->{
                     if(ticket!=generation)return;
-                    try {
-                        MediaPlayer next=new MediaPlayer();player=next;
-                        if(Build.VERSION.SDK_INT>=21)next.setAudioAttributes(attributes());else next.setAudioStreamType(AudioManager.STREAM_MUSIC);
-                        next.setWakeMode(this,PowerManager.PARTIAL_WAKE_LOCK);
-                        next.setDataSource(this,android.net.Uri.parse(source));
-                        next.setOnPreparedListener(p->{if(ticket!=generation)return;try{if(resolved.split){MediaPlayer.TrackInfo[] info=p.getTrackInfo();int audioCount=0,selected=-1;for(int i=0;i<info.length;i++)if(info[i].getTrackType()==MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO){if(selected<0)selected=i;audioCount++;}if(audioCount<2)throw new IllegalStateException("该歌曲没有双音轨伴奏，或电视不支持此格式，请切回原唱");p.selectTrack(selected);}prepared=true;loading=false;repository.remember(song);if(restorePosition>0){if(BuildConfig.MGV2000)seek(restorePosition);else p.seekTo(restorePosition);}}catch(Exception e){fail("伴奏不可用："+e.getMessage());return;}if(Build.VERSION.SDK_INT>=23&&rate!=1){p.setPlaybackParams(p.getPlaybackParams().setSpeed(rate));if(!wanted)p.pause();}if(wanted)resume();else {publish();detach();}});
-                        if(BuildConfig.MGV2000)next.setOnSeekCompleteListener(this::seekCompleted);
-                        next.setOnCompletionListener(p->{if(ticket!=generation)return;if(repeat==1)load();else if(repeat==3&&queue.index()==queue.size()-1)pause();else next();});
-                        next.setOnErrorListener((p,what,extra)->{if(ticket==generation)fail("播放失败，请检查文件授权、网络或音频格式");return true;});
-                        next.prepareAsync();
-                    }catch(Exception e){fail("无法打开音频："+e.getMessage());}
+                    if(account!=null&&!repository.auth.current(account.scope)){fail("登录状态已变化，请重新播放");return;}
+                    prepareTrack(song,resolved,account,quality,cachedFallback,restorePosition,ticket);
                 });
             }catch(Exception e){main.post(()->{if(ticket==generation)fail(e.getMessage());});}
         });
     }
+
+    private MusicRepository.AudioSource resolveForPlayback(Song song,boolean accompaniment,
+            CloudLibrary.Session<AuthStore.Scope> account,String quality)throws Exception{
+        if(account==null)return repository.resolveAudio(song,accompaniment);
+        String cached=cache.find(account.key,song,quality,false);
+        if(!cached.isEmpty())return new MusicRepository.AudioSource(cached,false);
+        try{return repository.resolveAudio(song,false);}
+        catch(Exception unavailable){
+            if(repository.auth.current(account.scope)){
+                cached=cache.find(account.key,song,quality,true);
+                if(!cached.isEmpty())return new MusicRepository.AudioSource(cached,false);
+            }
+            throw unavailable;
+        }
+    }
+
+    private void prepareTrack(Song song,MusicRepository.AudioSource resolved,CloudLibrary.Session<AuthStore.Scope> account,
+                              String quality,String fallback,int restorePosition,int ticket){
+        try {
+                        MediaPlayer next=new MediaPlayer();player=next;
+                        if(Build.VERSION.SDK_INT>=21)next.setAudioAttributes(attributes());else next.setAudioStreamType(AudioManager.STREAM_MUSIC);
+                        next.setWakeMode(this,PowerManager.PARTIAL_WAKE_LOCK);
+                        next.setDataSource(this,android.net.Uri.parse(resolved.url));
+                        cacheRequest=account==null?null:()->cache.schedule(repository,account,song,quality,resolved.url);
+                        next.setOnPreparedListener(p->{if(ticket!=generation)return;try{if(resolved.split){MediaPlayer.TrackInfo[] info=p.getTrackInfo();int audioCount=0,selected=-1;for(int i=0;i<info.length;i++)if(info[i].getTrackType()==MediaPlayer.TrackInfo.MEDIA_TRACK_TYPE_AUDIO){if(selected<0)selected=i;audioCount++;}if(audioCount<2)throw new IllegalStateException("该歌曲没有双音轨伴奏，或电视不支持此格式，请切回原唱");p.selectTrack(selected);}prepared=true;loading=false;repository.remember(song);if(restorePosition>0){if(BuildConfig.MGV2000)seek(restorePosition);else p.seekTo(restorePosition);}}catch(Exception e){fail("伴奏不可用："+e.getMessage());return;}if(Build.VERSION.SDK_INT>=23&&rate!=1){p.setPlaybackParams(p.getPlaybackParams().setSpeed(rate));if(!wanted)p.pause();}if(wanted)resume();else {publish();detach();}});
+                        if(BuildConfig.MGV2000)next.setOnSeekCompleteListener(this::seekCompleted);
+                        next.setOnCompletionListener(p->{if(ticket!=generation)return;if(repeat==1)load();else if(repeat==3&&queue.index()==queue.size()-1)pause();else next();});
+                        next.setOnErrorListener((p,what,extra)->{
+                            if(ticket==generation&&!useCacheFallback(song,account,quality,fallback,restorePosition,ticket))
+                                fail("播放失败，请检查文件授权、网络或音频格式");
+                            return true;
+                        });
+                        next.prepareAsync();
+        }catch(Exception e){
+            if(!useCacheFallback(song,account,quality,fallback,restorePosition,ticket))fail("无法打开音频："+e.getMessage());
+        }
+    }
+
+    private boolean useCacheFallback(Song song,CloudLibrary.Session<AuthStore.Scope> account,
+                                     String quality,String fallback,int initialPosition,int ticket){
+        if(fallback.isEmpty()||account==null||!repository.auth.current(account.scope))return false;
+        int at=prepared?position():initialPosition;
+        releasePlayer();
+        loading=true;
+        prepareTrack(song,new MusicRepository.AudioSource(fallback,false),account,quality,"",at,ticket);
+        return true;
+    }
+
+    void cacheCurrent(){if(playing()&&cacheRequest!=null)cacheRequest.run();}
+    boolean hasPreparedAudio(){return prepared;}
     private void fail(String message){loading=false;wanted=false;error=message==null?"播放失败":message;releasePlayer();focus.abandon();publish();if(remote!=null)foreground();else finishForeground(1);}
     public void toggle(){if(playing() || (loading&&wanted))pause();else resume();}
     public void resume(){
         wanted=true;
         if(player==null){if(current()!=null)load();return;}
         if(prepared){if(focus.request()!=AudioManager.AUDIOFOCUS_REQUEST_GRANTED){wanted=false;error="未获得音频焦点，请稍后重试";publish();return;}player.start();
+            cacheCurrent();
             if(BuildConfig.MGV2000&&reanchorOnResume){
                 reanchorOnResume=false;
                 seeking=true;
@@ -214,31 +274,78 @@ public class PlaybackService extends Service {
     }
     public void next(){if(queue.size()==0)return;int index=queue.index();queue.select(repeat==2&&queue.size()>1?(index+1+new Random().nextInt(queue.size()-1))%queue.size():(index+1)%queue.size());load();}
     public void previous(){if(position()>3000){seek(0);return;}if(queue.size()>0){queue.select((queue.index()-1+queue.size())%queue.size());load();}}
-    private void releasePlayer(){prepared=false;seeking=false;reanchorOnResume=false;activeSeek=-1;queuedSeek=-1;if(player!=null){player.release();player=null;}}
+    private void releasePlayer(){cacheRequest=null;notificationLyric="";prepared=false;seeking=false;reanchorOnResume=false;activeSeek=-1;queuedSeek=-1;if(player!=null){player.release();player=null;}}
     public void stopPlayback(){++generation;wanted=false;loading=false;releasePlayer();focus.abandon();publish();if(remote!=null)foreground();else{finishForeground(1);stopSelf();}}
     private void publish(){
         Song s=current();
+        if(notificationArt!=null)loadNotificationCover(s);
         if(Build.VERSION.SDK_INT>=21&&session!=null){
         long actions=PlaybackState.ACTION_PLAY|PlaybackState.ACTION_PAUSE|PlaybackState.ACTION_PLAY_PAUSE|PlaybackState.ACTION_SKIP_TO_NEXT|PlaybackState.ACTION_SKIP_TO_PREVIOUS|PlaybackState.ACTION_SEEK_TO|PlaybackState.ACTION_STOP;
         session.setPlaybackState(new PlaybackState.Builder().setActions(actions).setState(loading?PlaybackState.STATE_BUFFERING:playing()?PlaybackState.STATE_PLAYING:PlaybackState.STATE_PAUSED,position(),playing()?1:0).build());
-        if(s!=null)session.setMetadata(new MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE,s.title).putString(MediaMetadata.METADATA_KEY_ARTIST,s.artist).putString(MediaMetadata.METADATA_KEY_ALBUM,s.album).putLong(MediaMetadata.METADATA_KEY_DURATION,duration()).build());
+        publishMediaMetadata(s);
         }
         ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(1,notification());
         sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()));
+    }
+    private void loadNotificationCover(Song song){
+        String key=song==null?"":song.key();
+        if(key.equals(coverKey))return;
+        coverKey=key;cover=null;notificationLyric="";
+        if(coverJob!=null)coverJob.cancel(true);
+        if(song==null)return;
+        coverJob=notificationIo.submit(()->{
+            try{
+                android.graphics.Bitmap image=notificationArt.load(song);
+                if(image==null)return;
+                int edge=Math.max(image.getWidth(),image.getHeight());
+                android.graphics.Bitmap sized=edge<=384?image:android.graphics.Bitmap.createScaledBitmap(
+                    image,Math.max(1,image.getWidth()*384/edge),Math.max(1,image.getHeight()*384/edge),true);
+                main.post(()->{
+                    if(notificationIo.isShutdown()||!key.equals(coverKey))return;
+                    cover=sized;
+                    if(prepared||loading)refreshMediaNotification();
+                });
+            }catch(Exception ignored){}
+        });
+    }
+    private void publishMediaMetadata(Song song){
+        if(session==null)return;
+        if(song==null){session.setMetadata(null);return;}
+        String title=BuildConfig.TV?song.title:HandheldHome.name(song.title);
+        MediaMetadata.Builder metadata=new MediaMetadata.Builder().putString(MediaMetadata.METADATA_KEY_TITLE,title)
+            .putString(MediaMetadata.METADATA_KEY_ARTIST,song.artist).putString(MediaMetadata.METADATA_KEY_ALBUM,song.album)
+            .putLong(MediaMetadata.METADATA_KEY_DURATION,duration());
+        if(!notificationLyric.isEmpty()){
+            metadata.putString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE,title);
+            metadata.putString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE,notificationLyric);
+        }
+        if(cover!=null)metadata.putBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART,cover)
+            .putBitmap(MediaMetadata.METADATA_KEY_ART,cover).putBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON,cover);
+        session.setMetadata(metadata.build());
+    }
+    void updateNotificationLyric(String line){
+        if(line.equals(notificationLyric))return;
+        notificationLyric=line;
+        if(prepared)refreshMediaNotification();
+    }
+    private void refreshMediaNotification(){
+        publishMediaMetadata(current());
+        ((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(1,notification());
     }
     private PendingIntent action(String action){return PendingIntent.getService(this,action.hashCode(),new Intent(this,PlaybackService.class).setAction(action),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);}
     private Notification notification(){
         Song s=current();
         PendingIntent open=PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
-        Notification.Builder builder=(Build.VERSION.SDK_INT>=26?new Notification.Builder(this,CHANNEL):new Notification.Builder(this)).setSmallIcon(cc.echomusic.android.R.drawable.ic_music).setContentTitle(s==null?"EchoMusic":s.title).setContentText(error.isEmpty()?(s==null?"选择一首音乐开始播放":s.artist):error)
+        Notification.Builder builder=(Build.VERSION.SDK_INT>=26?new Notification.Builder(this,CHANNEL):new Notification.Builder(this)).setSmallIcon(cc.echomusic.android.R.drawable.ic_music).setContentTitle(s==null?"EchoMusic":s.title).setContentText(error.isEmpty()?(s==null?"选择一首音乐开始播放":notificationLyric.isEmpty()?s.artist:notificationLyric):error)
             .setContentIntent(open).setOnlyAlertOnce(true).setOngoing(playing()||loading)
             .addAction(android.R.drawable.ic_media_previous,"上一首",action(PREVIOUS))
             .addAction(playing()?android.R.drawable.ic_media_pause:android.R.drawable.ic_media_play,playing()?"暂停":"播放",action(TOGGLE))
             .addAction(android.R.drawable.ic_media_next,"下一首",action(NEXT));
             if(Build.VERSION.SDK_INT>=21&&session!=null)builder.setVisibility(Notification.VISIBILITY_PUBLIC).setStyle(new Notification.MediaStyle().setMediaSession(session.getSessionToken()).setShowActionsInCompactView(0,1,2));
+        if(cover!=null)builder.setLargeIcon(cover);
         return builder.build();
     }
     private void finishForeground(int mode){if(Build.VERSION.SDK_INT>=24)super.stopForeground(mode);else super.stopForeground((mode&1)!=0);}
     private void foreground(){startForeground(1,notification());}
-    @Override public void onDestroy(){main.removeCallbacks(sleepStop);if(statusLyrics!=null)statusLyrics.close();if(remote!=null){remote.close();remote=null;}++generation;releasePlayer();focus.abandon();if(Build.VERSION.SDK_INT>=21&&session!=null)session.release();unregisterReceiver(noisy);io.shutdownNow();super.onDestroy();}
+    @Override public void onDestroy(){main.removeCallbacks(sleepStop);if(statusLyrics!=null)statusLyrics.close();if(notificationIo!=null)notificationIo.shutdownNow();if(remote!=null){remote.close();remote=null;}++generation;releasePlayer();focus.abandon();if(Build.VERSION.SDK_INT>=21&&session!=null)session.release();unregisterReceiver(noisy);io.shutdownNow();super.onDestroy();}
 }

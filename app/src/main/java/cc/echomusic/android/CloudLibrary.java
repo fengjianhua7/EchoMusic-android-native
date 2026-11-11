@@ -117,12 +117,66 @@ public final class CloudLibrary<S> {
     public void add(Session<S> session,String id,Song song)throws Exception{synchronized(OPERATIONS){CloudProtocol.Playlist list=currentList(session,id,true);List<Song> before=tracks(session,list);if(find(before,song)!=null)return;get(session,"/playlist/tracks/add",params("listid",id,"data",CloudProtocol.trackPayload(song)));confirmPlaylist(session,list,song,true);}}
     public void remove(String id,Song song)throws Exception{remove(session(),id,song);}
     public void remove(Session<S> session,String id,Song song)throws Exception{synchronized(OPERATIONS){CloudProtocol.Playlist list=currentList(session,id,true);List<Song> before=tracks(session,list);Song existing=find(before,song);if(existing==null)return;get(session,"/playlist/tracks/del",params("listid",id,"fileids",CloudProtocol.fileId(existing)));confirmPlaylist(session,list,song,false);}}
+    int addAll(Session<S> session,String id,List<Song> selected)throws Exception{
+        synchronized(OPERATIONS){
+            CloudProtocol.Playlist list=currentList(session,id,true);
+            List<Song> known=new ArrayList<>(tracks(session,list));
+            List<Song> added=new ArrayList<>();
+            List<String> payload=new ArrayList<>();
+            for(Song song:selected){
+                if(find(known,song)!=null)continue;
+                payload.add(CloudProtocol.trackPayload(song));
+                known.add(song);
+                added.add(song);
+            }
+            if(payload.isEmpty())return 0;
+            for(int start=0;start<payload.size();start+=25){
+                get(session,"/playlist/tracks/add",params("listid",id,"data",String.join(",",payload.subList(start,Math.min(start+25,payload.size())))));
+            }
+            List<Song> confirmed=confirmedTracks(session,list);
+            int count=0;
+            for(Song song:added)if(find(confirmed,song)!=null)count++;
+            if(count!=added.size())throw new IOException("已确认添加 "+count+" 首，其余结果请刷新歌单查看");
+            return count;
+        }
+    }
+    int removeAll(Session<S> session,String id,List<Song> selected)throws Exception{
+        synchronized(OPERATIONS){
+            CloudProtocol.Playlist list;
+            if(id==null){
+                list=liked(session,lists(session));
+                if(list==null||list.source==2||(!list.owner.isEmpty()&&!list.owned(session.userid)))
+                    throw new IOException("未找到当前账号可编辑的收藏歌单");
+            }else list=currentList(session,id,true);
+            Set<String> existing=new HashSet<>();
+            for(Song song:tracks(session,list))existing.add(song.fileId);
+            List<String> ids=new ArrayList<>();
+            for(Song song:selected){
+                String fileId=CloudProtocol.fileId(song);
+                if(existing.remove(fileId))ids.add(fileId);
+            }
+            if(ids.isEmpty())return 0;
+            for(int start=0;start<ids.size();start+=100){
+                get(session,"/playlist/tracks/del",params("listid",list.id,"fileids",String.join(",",ids.subList(start,Math.min(start+100,ids.size())))));
+            }
+            Set<String> remaining=new HashSet<>();
+            for(Song song:confirmedTracks(session,list))remaining.add(song.fileId);
+            int count=0;
+            for(String fileId:ids)if(!remaining.contains(fileId))count++;
+            if(count!=ids.size())throw new IOException("已确认移除 "+count+" 首，其余结果请刷新歌单查看");
+            return count;
+        }
+    }
     private void confirmPlaylist(Session<S> session,CloudProtocol.Playlist list,Song song,boolean present)throws Exception{
+        if((find(confirmedTracks(session,list),song)!=null)!=present)
+            throw new IOException("云端尚未确认歌单变化，请刷新查看，未自动重复提交");
+    }
+    private List<Song> confirmedTracks(Session<S> session,CloudProtocol.Playlist list)throws Exception{
         List<Song> after;try{after=tracks(session,list);}catch(Exception e){throw new IOException("操作已提交，但歌单结果暂未确认，请刷新查看",e);}
         JSONArray cache=new JSONArray();for(Song s:after)cache.put(s.json());require(session);try{environment.write(session.key+"/playlist/"+list.id,cache.toString());}catch(IOException ignored){}
         Snapshot<S> known=snapshot();CloudProtocol.Playlist liked=liked(session,known.playlists);
         if(liked!=null&&liked.id.equals(list.id))publish(session,known.playlists,after,true);
-        if((find(after,song)!=null)!=present)throw new IOException("云端尚未确认歌单变化，请刷新查看，未自动重复提交");
+        return after;
     }
     public void create(String name)throws Exception{create(session(),name);}
     public void create(Session<S> session,String name)throws Exception{synchronized(OPERATIONS){require(session);String title=name.trim();if(title.isEmpty()||title.length()>80)throw new IOException("歌单名称需为 1–80 个字符");get(session,"/playlist/add",params("name",title,"type","0","source","1","is_pri","0","list_create_userid",session.userid));try{refreshInternal(session);}catch(Exception e){throw new IOException("歌单创建已提交，请刷新云端列表确认",e);}}}

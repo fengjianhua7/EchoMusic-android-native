@@ -79,7 +79,7 @@ public final class MusicRepository {
         Uri.Builder builder=Uri.parse(base+path).buildUpon();
         for(Map.Entry<String,String> e:params.entrySet())builder.appendQueryParameter(e.getKey(),e.getValue());
         HttpURLConnection connection=(HttpURLConnection)new URL(builder.build().toString()).openConnection();
-        connection.setInstanceFollowRedirects(false);connection.setConnectTimeout(path.equals("/register/dev")?5000:12000);connection.setReadTimeout(path.equals("/register/dev")?8000:25000);
+        connection.setInstanceFollowRedirects(false);connection.setConnectTimeout(path.equals("/register/dev")?5000:12000);connection.setReadTimeout(path.equals("/register/dev")?8000:path.equals("/user/cloud/upload")?180000:25000);
         connection.setRequestProperty("Accept","application/json");
         if(local!=null)connection.setRequestProperty("X-Echo-Token",local.token);
         String cookieKey="device_cookies_"+scope.endpoint;
@@ -130,7 +130,7 @@ public final class MusicRepository {
         JSONArray dArray=o.optJSONArray("data");
         return dArray!=null?dArray:new JSONArray();
     }
-    List<Song> recognize(byte[] audio)throws Exception{
+    List<Song> recognize(byte[] audio,java.util.function.BooleanSupplier cancelled)throws Exception{
         AuthStore.Scope scope=auth.scope();
         JSONObject response=exchange("/audio/match",params(),scope,false,audio).body;
         if(AuthProtocol.failed(response))throw new IOException(AuthProtocol.message(response,200));
@@ -139,12 +139,17 @@ public final class MusicRepository {
         if(data!=null)for(int i=0;i<data.length();i++){JSONObject match=data.optJSONObject(i);if(match!=null)ranked.add(match);}
         ranked.sort(Comparator.comparingDouble(match->match.optDouble("dist",1)));
         List<Song> matches=new ArrayList<>();
+        List<Song> checked=new ArrayList<>();
         for(JSONObject match:ranked){
+            if(cancelled.getAsBoolean())return Collections.emptyList();
+            if(!auth.current(scope))throw new IOException("账号已变化，请重新识曲");
             Song detected=Song.fromJson(match);
             if(!detected.cloudIdentified()&&detected.artist.isEmpty())continue;
+            if(checked.stream().anyMatch(song->Song.same(song,detected)))continue;
+            checked.add(detected);
             Song selected=detected;
             try{
-                List<Song> results=search(detected.title+" "+detected.artist,1);
+                List<Song> results=checked.size()<=5?search(detected.title+" "+detected.artist,1):Collections.emptyList();
                 for(Song result:results){
                     if(Song.same(result,detected)||(detected.hash.isEmpty()&&!detected.artist.isEmpty()
                         &&LyricChoice.normalized(result.title).equals(LyricChoice.normalized(detected.title))
@@ -154,7 +159,8 @@ public final class MusicRepository {
                 }
             }catch(IOException unavailable){if(detected.hash.isEmpty())throw unavailable;}
             if(!auth.current(scope))throw new IOException("账号已变化，请重新识曲");
-            if(!selected.hash.isEmpty()&&matches.stream().noneMatch(song->Song.same(song,detected)))matches.add(selected);
+            Song candidate=selected;
+            if(!candidate.hash.isEmpty()&&matches.stream().noneMatch(song->Song.same(song,candidate)))matches.add(candidate);
             if(matches.size()>=5)break;
         }
         return matches;
@@ -173,10 +179,30 @@ public final class MusicRepository {
     }
     public String resolveDownload(Song song,AuthStore.Scope scope)throws Exception{
         if(song.local())throw new IOException("这首歌已经在本地");
+        if(!BuildConfig.TV&&song.cloudDisk())return resolveDisk(song,scope);
         JSONObject verified=downloadGet("/user/verify",params(),scope);JSONObject data=verified.optJSONObject("data");String proof=AuthProtocol.text(data,"auth");
         if(proof.isEmpty())throw new IOException("未取得当前账号的下载地址，请先登录并确认歌曲权限");
         Map<String,String> query=params("hash",song.hash,"auth",proof);if(!song.albumId.isEmpty())query.put("album_id",song.albumId);
         String url=findUrl(downloadGet("/song/url/auth/merge",query,scope));if(url.isEmpty())throw new IOException("当前歌曲没有可用下载地址，可能受会员或版权限制");return url;
+    }
+    JSONObject diskGet(String path,Map<String,String> query,CloudLibrary.Session<AuthStore.Scope> session)throws Exception{
+        if(BuildConfig.TV||!AuthProtocol.positiveId(session.userid))throw new IOException("请先登录云端账号");
+        return downloadGet(path,query,session.scope);
+    }
+    void uploadDisk(String filename,String extension,byte[] bytes,CloudLibrary.Session<AuthStore.Scope> session)throws Exception{
+        if(BuildConfig.TV||!AuthProtocol.positiveId(session.userid))throw new IOException("请先登录云端账号");
+        AuthRequestRunner.Response<AuthStore.Scope> response=exchange("/user/cloud/upload",params("name",filename,"extendname",extension),session.scope,false,bytes);
+        if(response.status<200||response.status>=300||AuthProtocol.failed(response.body))
+            throw new IOException(AuthProtocol.message(response.body,response.status));
+    }
+    private String resolveDisk(Song song,AuthStore.Scope scope)throws Exception{
+        CloudLibrary.Session<AuthStore.Scope> session=cloud.session();
+        if(!auth.current(scope)||!session.key.equals(song.cloudDiskKey()))
+            throw new IOException("请切换到此云盘文件所属账号");
+        String url=findUrl(diskGet("/user/cloud/url",params("hash",song.hash,"name",song.cloudDiskName(),
+            "audio_id",song.cloudDiskAudio(),"album_audio_id",song.cloudDiskAlbumAudio(),"kv_id",song.cloudDiskId()),session));
+        if(url.isEmpty())throw new IOException("云盘暂未返回此文件的播放地址");
+        return url;
     }
     private JSONObject downloadGet(String path,Map<String,String> params,AuthStore.Scope scope)throws Exception{
         AuthRequestRunner<AuthStore.Scope> runner=new AuthRequestRunner<>(auth::current,(session,skip)->exchange(path,params,session,skip),(event,session,skip)->VerificationBroker.instance().await(event,this,session,skip));
@@ -199,6 +225,10 @@ public final class MusicRepository {
     public String resolve(Song song) throws Exception {return resolve(song,false);}
     public String resolve(Song song,boolean accompaniment) throws Exception {
         if(!song.source.isEmpty()){if(accompaniment)throw new IOException("此歌曲没有在线伴奏");return song.source;}
+        if(!BuildConfig.TV&&song.cloudDisk()){
+            if(accompaniment)throw new IOException("云盘文件没有在线伴奏");
+            return resolveDisk(song,auth.scope());
+        }
         boolean directBox = BuildConfig.MGV2000 && ApiEndpoint.embedded(endpoint());
         try {
             return resolveCatalog(song,accompaniment);

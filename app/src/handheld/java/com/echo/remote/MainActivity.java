@@ -60,11 +60,17 @@ public class MainActivity extends Activity {
             v.setPadding(0,i.getSystemWindowInsetTop(),0,i.getSystemWindowInsetBottom()); return i;
         });
         LinearLayout header=row(shell);
-        header.setPadding(dp(20),dp(8),dp(12),dp(8)); header.setGravity(Gravity.CENTER_VERTICAL);
+        boolean narrow=getResources().getConfiguration().screenWidthDp<360;
+        header.setPadding(dp(narrow?8:12),dp(8),dp(narrow?8:12),dp(8)); header.setGravity(Gravity.CENTER_VERTICAL);
         icon(header,"back","返回音乐主界面",this::finish,48);
         TextView brand=text("Echo 远控",22,MusicUi.TEXT); brand.setTypeface(Typeface.DEFAULT,Typeface.BOLD);
-        header.addView(brand,new LinearLayout.LayoutParams(0,dp(48),1)); brand.setGravity(Gravity.CENTER_VERTICAL);
-        connection=text("连接电脑",12,MusicUi.BLUE); connection.setPadding(dp(14),0,dp(14),0);
+        oneLine(brand);
+        brand.setAutoSizeTextTypeUniformWithConfiguration(narrow?13:14,22,1,android.util.TypedValue.COMPLEX_UNIT_SP);
+        LinearLayout.LayoutParams brandSlot=new LinearLayout.LayoutParams(0,dp(48),1);
+        brandSlot.setMargins(dp(4),0,dp(6),0);
+        header.addView(brand,brandSlot);brand.setGravity(Gravity.CENTER_VERTICAL);
+        connection=text("连接电脑",12,MusicUi.BLUE);
+        oneLine(connection);connection.setPadding(dp(8),0,dp(8),0);connection.setMaxWidth(dp(narrow?80:94));
         connection.setGravity(Gravity.CENTER); connection.setBackground(MusicUi.shape(MusicUi.SURFACE,24,this));
         header.addView(connection,new LinearLayout.LayoutParams(-2,dp(40))); connection.setOnClickListener(v->connectionDialog());
         lyricsToggle=icon(header,"lyric","打开歌词页",this::toggleLyrics,48);
@@ -568,7 +574,7 @@ public class MainActivity extends Activity {
                     boolean changed=!key.equals(songId);if(changed){artwork=null;coverKey="";isFavorite=false;if(lyricData==null)lyrics=new JSONObject();}
                     renderState();if(changed)refreshFavorite();loadCover();
                 });
-            }catch(Exception e){ui.post(()->{if(!isDestroyed()&&epoch==generation){connected=false;renderState();connection.setText("已断开 · 重连");if(lyric!=null)lyric.setText(R.string.er_connection_lost);}});}
+            }catch(Exception e){ui.post(()->{if(!isDestroyed()&&epoch==generation){connected=false;renderState();connection.setText("已断开");if(lyric!=null)lyric.setText(R.string.er_connection_lost);}});}
             finally{ui.post(()->polling=false);}
         });
     }
@@ -576,7 +582,7 @@ public class MainActivity extends Activity {
         JSONObject pb=latest.optJSONObject("playback");songId=pb==null?"":pb.optString("trackId");
         trackTitle=pb==null?"":pb.optString("title");trackArtist=pb==null?"":pb.optString("artist");
         playing=connected&&pb!=null&&pb.optBoolean("isPlaying");
-        if(connected)connection.setText("● 已连接电脑");
+        if(connected)connection.setText("● 已连接");
         if(title!=null)title.setText(trackTitle.isEmpty()?"让音乐，连接生活":trackTitle);
         if(artist!=null)artist.setText(trackArtist.isEmpty()?"连接电脑，选择你喜欢的歌":trackArtist);
         miniTitle.setText(trackTitle.isEmpty()?"等待电脑播放":trackTitle);

@@ -15,13 +15,58 @@ final class MusicDownloads {
         final long id,bytes,total;final Song song;final int status,reason;final Uri uri;
         Item(long id,Song song,int status,int reason,long bytes,long total,Uri uri){this.id=id;this.song=song;this.status=status;this.reason=reason;this.bytes=bytes;this.total=total;this.uri=uri;}
         boolean complete(){return status==DownloadManager.STATUS_SUCCESSFUL&&uri!=null;}
+        boolean active(){return status==DownloadManager.STATUS_PENDING||status==DownloadManager.STATUS_RUNNING||status==DownloadManager.STATUS_PAUSED;}
+        int percent(){return total>0?(int)Math.max(0,Math.min(100,100d*bytes/total)):0;}
+        boolean sameProgress(Item other){
+            return id==other.id&&status==other.status&&reason==other.reason&&total==other.total
+                &&(total>0?percent()==other.percent():bytes/1024==other.bytes/1024)&&Objects.equals(uri,other.uri);
+        }
         Song local(){try{JSONObject data=song.json();data.put("id","download-"+id);data.put("source",uri.toString());return Song.fromJson(data);}catch(JSONException error){throw new IllegalStateException("下载歌曲信息无效",error);}}
-        String label(){if(complete())return "已下载 · 可离线播放";if(status==DownloadManager.STATUS_FAILED)return "下载失败（"+reason+"），可移除后重试";if(status==0)return "文件或任务已被移除";String progress=total>0?Math.min(100,bytes*100/total)+"%":bytes/1024+" KB";return (status==DownloadManager.STATUS_PAUSED?"等待网络 / 重试 · ":status==DownloadManager.STATUS_PENDING?"等待下载 · ":"下载中 · ")+progress;}
+        String label(){if(complete())return "已下载 · 可离线播放";if(status==DownloadManager.STATUS_FAILED)return "下载失败（"+reason+"），可移除后重试";if(status==0||status==DownloadManager.STATUS_SUCCESSFUL)return "文件或任务已被移除";String progress=total>0?percent()+"%":bytes/1024+" KB";return (status==DownloadManager.STATUS_PAUSED?"等待网络 / 重试 · ":status==DownloadManager.STATUS_PENDING?"等待下载 · ":"下载中 · ")+progress;}
     }
     private final Context context;private final SharedPreferences prefs;private final DownloadManager manager;
     MusicDownloads(Context c){context=c.getApplicationContext();prefs=context.getSharedPreferences("music-downloads",0);manager=(DownloadManager)context.getSystemService(Context.DOWNLOAD_SERVICE);}
     private JSONArray records(){try{return new JSONArray(prefs.getString("tasks","[]"));}catch(JSONException e){return new JSONArray();}}
-    synchronized List<Item> items(){List<Item> result=new ArrayList<>();JSONArray saved=records();for(int i=0;i<saved.length();i++){JSONObject entry=saved.optJSONObject(i);if(entry==null||entry.optJSONObject("song")==null)continue;long id=entry.optLong("id",-1);Song song=Song.fromJson(entry.optJSONObject("song"));int status=0,reason=0;long bytes=0,total=0;Uri uri=null;try(Cursor cursor=manager.query(new DownloadManager.Query().setFilterById(id))){if(cursor!=null&&cursor.moveToFirst()){status=cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS));reason=cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON));bytes=cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR));total=cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES));if(status==DownloadManager.STATUS_SUCCESSFUL)uri=manager.getUriForDownloadedFile(id);}}catch(RuntimeException ignored){}result.add(new Item(id,song,status,reason,bytes,total,uri));}return result;}
+    synchronized List<Item> items(){
+        Map<Long,Song> songs=new LinkedHashMap<>();
+        JSONArray saved=records();
+        for(int i=0;i<saved.length();i++){
+            JSONObject entry=saved.optJSONObject(i);
+            if(entry==null||entry.optJSONObject("song")==null)continue;
+            long id=entry.optLong("id",-1);
+            if(id>=0)songs.put(id,Song.fromJson(entry.optJSONObject("song")));
+        }
+        if(songs.isEmpty())return Collections.emptyList();
+
+        Map<Long,Item> states=new HashMap<>();
+        List<Long> ids=new ArrayList<>(songs.keySet());
+        for(int start=0;start<ids.size();start+=250){
+            long[] batch=new long[Math.min(250,ids.size()-start)];
+            for(int i=0;i<batch.length;i++)batch[i]=ids.get(start+i);
+            try(Cursor cursor=manager.query(new DownloadManager.Query().setFilterById(batch))){
+                if(cursor==null)continue;
+                int idColumn=cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_ID);
+                int statusColumn=cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS);
+                int reasonColumn=cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON);
+                int bytesColumn=cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR);
+                int totalColumn=cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES);
+                while(cursor.moveToNext()){
+                    long id=cursor.getLong(idColumn);
+                    int status=cursor.getInt(statusColumn);
+                    Uri uri=status==DownloadManager.STATUS_SUCCESSFUL?manager.getUriForDownloadedFile(id):null;
+                    states.put(id,new Item(id,songs.get(id),status,cursor.getInt(reasonColumn),
+                        cursor.getLong(bytesColumn),cursor.getLong(totalColumn),uri));
+                }
+            }catch(RuntimeException ignored){}
+        }
+        List<Item> result=new ArrayList<>(songs.size());
+        for(Map.Entry<Long,Song> entry:songs.entrySet()){
+            long id=entry.getKey();
+            Item item=states.get(id);
+            result.add(item!=null?item:new Item(id,entry.getValue(),0,0,0,0,null));
+        }
+        return result;
+    }
     synchronized long enqueue(Song song,String address)throws Exception{
         if(song.local())throw new IOException("这首歌已经在本地");
         if(manager==null)throw new IOException("系统下载管理器不可用，请在系统设置中启用");

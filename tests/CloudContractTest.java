@@ -21,8 +21,20 @@ public final class CloudContractTest {
             gets++;last=new HashMap<>(params);if(route.equals(changeOn)){version="B1";userid="202";}if(failRead&&route.contains("/track/all"))throw new IOException("offline");JSONObject response=new JSONObject().put("status",1);JSONObject data=new JSONObject();
             if(route.equals("/user/playlist")){JSONArray page=new JSONArray();int number=Integer.parseInt(params.get("page")),size=Integer.parseInt(params.get("pagesize"));for(int i=(number-1)*size;i<Math.min(number*size,playlists.size());i++)page.put(playlists.get(i));return response.put("data",data.put("info",page).put("total",playlists.size()));}
             if(route.contains("/track/all")){String id=params.getOrDefault("listid","3");List<Song> list=songs.getOrDefault(id,Collections.emptyList());if(badArray)return response.put("data",new JSONObject());JSONArray page=new JSONArray();int number=repeatPage?1:Integer.parseInt(params.get("page")),size=Integer.parseInt(params.get("pagesize"));for(int i=(number-1)*size;i<Math.min(number*size,list.size());i++)page.put(list.get(i).json());return response.put("data",data.put("info",page).put("total",list.size()));}
-            writes.add(route);if(route.equals("/playlist/tracks/add")){String[] fields=params.get("data").split("\\|",-1);if(!ignoreMutation){Song s=new Song(fields[3],fields[0],"","",fields[1],fields[2],"",fields[3],"777777",0);songs.get(params.get("listid")).add(s);}return response;}
-            if(route.equals("/playlist/tracks/del")){if(!ignoreMutation)songs.get(params.get("listid")).removeIf(s->s.fileId.equals(params.get("fileids")));return response;}
+            writes.add(route);
+            if(route.equals("/playlist/tracks/add")){
+                List<Song> list=songs.get(params.get("listid"));
+                if(!ignoreMutation)for(String entry:params.get("data").split(",")){
+                    String[] fields=entry.split("\\|",-1);
+                    list.add(new Song(fields[3],fields[0],"","",fields[1],fields[2],"",fields[3],String.valueOf(777777+list.size()),0));
+                }
+                return response;
+            }
+            if(route.equals("/playlist/tracks/del")){
+                Set<String> ids=new HashSet<>(Arrays.asList(params.get("fileids").split(",")));
+                if(!ignoreMutation)songs.get(params.get("listid")).removeIf(s->ids.contains(s.fileId));
+                return response;
+            }
             if(route.equals("/playlist/add")){String id=String.valueOf(playlists.size()+1);playlists.add(playlist(id,params.get("name"),session.userid,false));songs.put(id,new ArrayList<>());return response.put("data",new JSONObject().put("listid",id));}
             throw new IOException("Unexpected route "+route);
         }
@@ -83,6 +95,21 @@ public final class CloudContractTest {
         Song nestedId=Song.fromJson(new JSONObject().put("album_audio_id",0).put("audio_info",new JSONObject().put("audio_id",77)));check(Song.same(nestedId,byMix),"zero placeholder does not mask nested positive song ID");
         Env identityEnv=new Env();identityEnv.songs.get("1").add(alternate);CloudLibrary<String> identityLibrary=new CloudLibrary<>(identityEnv);identityLibrary.refresh();check(identityLibrary.snapshot().favorite(quality),"favorite index matches quality alias");check(identityLibrary.snapshot().favorite(byMix),"favorite index matches a mix-only song");
         check(!Song.same(Song.fromJson(new JSONObject().put("fileid",77)),byMix),"playlist file IDs never count as song identity");
+        Env batchEnv=new Env();
+        CloudLibrary<String> batch=new CloudLibrary<>(batchEnv);
+        CloudLibrary.Session<String> session=batchEnv.capture();
+        check(batch.addAll(session,"2",Arrays.asList(song(1),song(1),song(2)))==2,"batch add deduplicates and confirms each song");
+        check(batchEnv.writes.equals(Collections.singletonList("/playlist/tracks/add")),"small batch sends one mutation");
+        rejects(()->batch.removeAll(session,"3",new ArrayList<>(batchEnv.songs.get("2"))),"batch removal checks list ownership");
+        check(batch.removeAll(session,"2",Arrays.asList(song(1),song(2)))==0,"batch removal never substitutes catalog IDs for selected playlist file IDs");
+        check(batch.removeAll(session,"2",new ArrayList<>(batchEnv.songs.get("2")))==2,"batch removal confirms selected file IDs disappeared");
+        JSONObject diskEntry=new JSONObject().put("hash",nested.hash).put("name","file.mp3")
+            .put("kv_id",42).put("audio_id",12).put("album_audio_id",22);
+        Song disk=Song.cloudDisk(diskEntry,"owner-a"), diskCopy=Song.fromJson(disk.json());
+        check(diskCopy.cloudDiskId().equals("42")&&diskCopy.cloudDiskAudio().equals("12")
+            &&diskCopy.cloudDiskAlbumAudio().equals("22"),"private cloud file IDs survive queue serialization separately");
+        check(Song.same(disk,diskCopy)&&!Song.same(disk,Song.cloudDisk(diskEntry,"owner-b")),
+            "cloud disk identity is isolated across accounts");
         System.out.println("PASS: "+checks+" cloud library contract checks");
     }
 }

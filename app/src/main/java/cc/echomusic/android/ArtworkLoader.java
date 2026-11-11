@@ -27,6 +27,23 @@ final class ArtworkLoader {
         }catch(Exception ignored){}final Bitmap result=image;if(result!=null)cache.put(key,result);main.post(()->{if(!key.equals(view.getTag()))return;if(result!=null){view.setImageBitmap(result);placeholder.setVisibility(View.GONE);}else{placeholder.setText(song.local()?"♫\n音频未提供内嵌封面":"♫\n暂无可用封面");placeholder.setTextSize(18);}});});
     }
     void bindPlaylist(ImageView view,TextView placeholder,String id){String token="playlist:"+id;view.setTag(token);io.execute(()->{try{java.util.List<Song> songs=repo.cloud.cachedPlaylist(id);if(songs.isEmpty())return;Song first=songs.get(0);Bitmap bitmap=load(first);if(bitmap!=null)main.post(()->{if(token.equals(view.getTag())){view.setImageBitmap(bitmap);placeholder.setVisibility(View.GONE);}});}catch(Exception ignored){}});}
+    void bindCatalog(ImageView view,TextView placeholder,String address){
+        if(address.isEmpty())return;
+        String key="catalog:"+address;
+        view.setTag(key);
+        Bitmap existing=cache.get(key);
+        if(existing!=null){view.setImageBitmap(existing);placeholder.setVisibility(View.GONE);return;}
+        io.execute(()->{
+            try{
+                Bitmap image=download(address);
+                if(image==null)return;
+                cache.put(key,image);
+                main.post(()->{
+                    if(key.equals(view.getTag())){view.setImageBitmap(image);placeholder.setVisibility(View.GONE);}
+                });
+            }catch(Exception ignored){}
+        });
+    }
     Bitmap load(Song song)throws Exception{Bitmap image=cache.get(song.key());if(image!=null)return image;
             if(song.local()){MediaMetadataRetriever reader=new MediaMetadataRetriever();try{reader.setDataSource(context,Uri.parse(song.source));byte[] bytes=reader.getEmbeddedPicture();if(bytes!=null)image=decode(bytes);}finally{reader.release();}}
             else{

@@ -30,17 +30,40 @@ final class StatusLyrics {
     private float downX,downY;private int startX,startY;private boolean dragging;
     private int serial;
     private boolean closed;
+    private Future<?> lyricJob;
     StatusLyrics(PlaybackService service,MusicRepository repo){this.service=service;this.repo=repo;prefs=service.getSharedPreferences("status_lyrics",0);windows=(WindowManager)service.getSystemService(Context.WINDOW_SERVICE);if(!BuildConfig.TV)main.post(tick);}
     private int dp(float v){return Math.round(v*service.getResources().getDisplayMetrics().density);}
     private final Runnable tick=new Runnable(){public void run(){if(closed)return;try{update();}catch(RuntimeException ignored){remove();}main.postDelayed(this,350);}};
     private void update(){
         Song song=service.current();
         boolean preview=prefs.getLong("preview_until",0)>System.currentTimeMillis();
+        if(song==null){
+            if(!key.isEmpty()){key="";document=null;++serial;if(lyricJob!=null)lyricJob.cancel(true);}
+        }else if(service.hasPreparedAudio()&&!song.key().equals(key)){
+            key=song.key();document=null;
+            int ticket=++serial,duration=service.duration();
+            if(lyricJob!=null)lyricJob.cancel(true);
+            lyricJob=io.submit(()->{
+                Lyrics.Document loaded=null;
+                try{
+                    String raw=repo.cachedLyrics(song);
+                    if(raw.isEmpty()&&!song.local())raw=repo.fetchLyrics(song,null,duration);
+                    loaded=Lyrics.document(raw);
+                }catch(Exception ignored){}
+                Lyrics.Document result=loaded;
+                main.post(()->{if(!closed&&ticket==serial&&song.key().equals(key))document=result;});
+            });
+        }
+        String line="";
+        if(song!=null&&song.key().equals(key)&&service.hasPreparedAudio()&&document!=null){
+            int index=Lyrics.current(document.lines,service.position()-repo.lyricOffset(song));
+            if(index>=0)line=document.lines.get(index).text;
+        }
+        service.updateNotificationLyric(line);
         if(!prefs.getBoolean("enabled",false)||!Settings.canDrawOverlays(service)||(!preview&&(song==null||(!service.playing()&&!prefs.getBoolean("paused",false))))){remove();return;}
-        if(song!=null&&!song.key().equals(key)){key=song.key();document=null;final String wanted=key;final int ticket=++serial;final int duration=service.duration();io.execute(()->{Lyrics.Document loaded=null;try{String raw=repo.cachedLyrics(song);if(raw.isEmpty()&&!song.local())raw=repo.fetchLyrics(song,null,duration);loaded=Lyrics.document(raw);}catch(Exception ignored){}final Lyrics.Document result=loaded;main.post(()->{if(!closed&&ticket==serial&&wanted.equals(key))document=result;});});}
         if(label==null){label=new TextView(service);label.setSingleLine(true);label.setEllipsize(TextUtils.TruncateAt.END);label.setPadding(dp(8),0,dp(8),0);label.setIncludeFontPadding(false);label.setContentDescription("顶部歌词");label.setOnClickListener(v->{if(prefs.getBoolean("tap",false))service.toggle();});revision=-1;}
         
-        String text=song==null?"歌词位置预览":HandheldHome.name(song.title);if(song!=null&&!prefs.getBoolean("title",false)&&document!=null){int line=Lyrics.current(document.lines,service.position()-repo.lyricOffset(song));if(line>=0)text=document.lines.get(line).text;}
+        String text=song==null?"歌词位置预览":!line.isEmpty()&&!prefs.getBoolean("title",false)?line:HandheldHome.name(song.title);
         if(!text.equals(painted)||!text.contentEquals(label.getText())){painted=text;label.setText(text);revision=-1;}
         long next=prefs.getLong("revision",0);if(!dragging&&(next!=revision||screenWidth!=service.getResources().getDisplayMetrics().widthPixels||screenHeight!=service.getResources().getDisplayMetrics().heightPixels)){revision=next;applyWindow();}
     }
