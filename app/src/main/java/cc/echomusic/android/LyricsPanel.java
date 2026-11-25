@@ -174,6 +174,7 @@ public final class LyricsPanel {
         optionGroup(playback,"播放");
         option(menu,playback,"播放音质","标准、高音质与无损",activity::playbackQuality);
         option(menu,playback,"定时关闭","设定停止播放的时间",activity::sleepTimer);
+        if(!BuildConfig.TV)option(menu,playback,"后台持续播放",PlaybackPreferences.background(activity)?"已开启 · 抖音等应用不再打断":"已关闭 · 其他应用发声即暂停",activity::toggleBackgroundPlayback);
         if(song!=null&&!song.local())option(menu,playback,"下载到本地","离线播放",activity::downloadCurrent);
         option(menu,playback,"歌曲操作","收藏、加入歌单与队列",()->{if(song!=null)activity.songMenu(song);});
 

@@ -1035,8 +1035,43 @@ public class MainActivity extends Activity {
             })).show()),lp(-1,48));gap(form,20);
     }
 
+    /** 后台持续播放开关：开启后切到抖音等会发声的应用时不会被暂停。 */
+    void backgroundPlaybackSettings(LinearLayout form){
+        form.addView(title("后台播放",19));gap(form,8);
+        Switch background=new Switch(this);
+        background.setText("后台持续播放");background.setTextColor(INK);
+        background.setChecked(PlaybackPreferences.background(this));
+        form.addView(background,lp(-1,48));gap(form,4);
+        form.addView(text("开启后，锁屏、切到其他应用或打开抖音、微信视频时音乐继续播放，本应用不与其他应用抢占音频焦点；关闭后按系统规则处理，其他应用播放声音时本应用自动暂停。",14,MUTED));gap(form,10);
+        background.setOnCheckedChangeListener((view,on)->{
+            PlaybackPreferences.background(this,on);
+            if(service!=null)service.applyBackgroundPlayback();
+            toast(on?"已开启后台持续播放":"已关闭后台持续播放");
+        });
+        form.addView(button("允许后台运行（关闭电池优化）",this::requestIgnoreBatteryOptimizations),lp(-1,48));gap(form,6);
+        form.addView(text("部分手机的省电策略会在锁屏后清理后台进程，允许后台运行可以减少被系统中断的情况。",13,MUTED));gap(form,20);
+    }
+    void toggleBackgroundPlayback(){
+        boolean enabled=!PlaybackPreferences.background(this);
+        PlaybackPreferences.background(this,enabled);
+        if(service!=null)service.applyBackgroundPlayback();
+        toast(enabled?"已开启：锁屏和抖音等应用不再打断播放":"已关闭：其他应用发声时自动暂停");
+        if(page==3)render();
+    }
+    void requestIgnoreBatteryOptimizations(){
+        try{
+            android.os.PowerManager power=(android.os.PowerManager)getSystemService(POWER_SERVICE);
+            if(power!=null&&power.isIgnoringBatteryOptimizations(getPackageName())){toast("已允许后台运行，无需重复设置");return;}
+            startActivity(new Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,Uri.parse("package:"+getPackageName())));
+            return;
+        }catch(Exception ignored){/* 部分电视系统没有电池优化页面，退回应用详情页 */}
+        try{startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.fromParts("package",getPackageName(),null)));}
+        catch(Exception error){toast("请在系统设置中允许 EchoMusic 后台运行");}
+    }
+
     void settings(){
         header("设置","音乐与你的设备，默契配合。");ScrollView scroll=new ScrollView(this);content.addView(scroll,lp(-1,-1));LinearLayout form=col();scroll.addView(form);
+        if(!BuildConfig.TV)backgroundPlaybackSettings(form);
         form.addView(button("局域网远控",this::remoteSettings),lp(-1,56));gap(form,16);if(!BuildConfig.TV){form.addView(button("状态栏歌词",()->StatusLyrics.settings(this)),lp(-1,56));gap(form,16);}
         if(!BuildConfig.TV)cacheSettings(form);
         form.addView(title("账号",19));gap(form,8);form.addView(text(repo.auth.displayName(),16,INK));gap(form,12);
@@ -1046,7 +1081,7 @@ public class MainActivity extends Activity {
         form.addView(text(ApiEndpoint.embedded(repo.endpoint())?"已使用内置连接，打开应用即可在线听歌。":"正在使用你设置的外部连接。",15,MUTED));gap(form,14);
         form.addView(button("检查连接",()->{int ticket=++request;toast("正在检查连接…");io.execute(()->{try{if(ApiEndpoint.embedded(repo.endpoint())){EmbeddedApi.instance().await(this);repo.get("/__health",MusicRepository.params());}else repo.get("/search",MusicRepository.params("keywords","音乐","type","song","page","1","pagesize","1"));main.post(()->{if(ticket==request&&!isDestroyed())toast("连接正常");});}catch(Exception e){main.post(()->{if(ticket==request&&!isDestroyed())toast(e.getMessage());});}});}),lp(-1,48));gap(form,10);
         form.addView(button("高级连接设置",this::advancedConnection),lp(-1,48));gap(form,24);line(form);gap(form,20);
-        form.addView(title("关于 EchoMusic Android",18));gap(form,10);form.addView(text("0.10.2 · 云端音乐库与逐字歌词版\n手机 / 平板 / 横竖屏 / 分屏自适应\n基于 hoowhoami/EchoMusic · GPL-3.0-only\n\n内置音乐连接，无需电脑或额外安装工具。支持扫码和短信登录、平台安全验证、在线搜索、本地音乐、队列、收藏、同步歌词和后台媒体控制。",14,MUTED));gap(form,20);
+        form.addView(title("关于 EchoMusic Android",18));gap(form,10);form.addView(text("0.12.3 · 后台持续播放版\n手机 / 平板 / 横竖屏 / 分屏自适应\n基于 hoowhoami/EchoMusic · GPL-3.0-only\n\n内置音乐连接，无需电脑或额外安装工具。支持扫码和短信登录、平台安全验证、在线搜索、本地音乐、队列、收藏、同步歌词和后台媒体控制。",14,MUTED));gap(form,20);
         form.addView(button("查看原项目",()->startActivity(new Intent(Intent.ACTION_VIEW,Uri.parse("https://github.com/hoowhoami/EchoMusic")))));
     }
     void advancedConnection(){advancedConnection(null);}

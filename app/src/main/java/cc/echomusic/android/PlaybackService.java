@@ -31,6 +31,9 @@ public class PlaybackService extends Service {
     private final PlaybackQueue<Song> queue=new PlaybackQueue<>();
     private int generation=0;
     private boolean prepared=false, loading=false, resumeAfterFocus=false, wanted=false;
+    // 后台持续播放：不抢音频焦点，其他应用发声时本应用继续播放。
+    private boolean focusHeld=false, mixWithOthers=false, startedExplicitly=false;
+    private static final String RESUME_PLAYING="resume_playing_v1",RESUME_POSITION="resume_position_v1",RESUME_SAVED_AT="resume_saved_at_v1";
     private String error="";
     private String audioMode="original";private int switchPosition;private boolean switchPaused;
     public String audioMode(){return audioMode;}
@@ -41,14 +44,18 @@ public class PlaybackService extends Service {
     public IBinder onBind(Intent intent) { return binder; }
     @Override public void onCreate() {
         super.onCreate(); repository=new MusicRepository(this); audio=(AudioManager)getSystemService(AUDIO_SERVICE);
+        mixWithOthers=!BuildConfig.TV&&PlaybackPreferences.background(this);
         if(Build.VERSION.SDK_INT>=26)((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).createNotificationChannel(new NotificationChannel(CHANNEL,"音乐播放",NotificationManager.IMPORTANCE_LOW));
         focus=new AudioFocusCompat(audio,Build.VERSION.SDK_INT>=26?attributes():null,change->{
-                if(change==AudioManager.AUDIOFOCUS_GAIN) { if(player!=null)player.setVolume(1,1); if(resumeAfterFocus){resumeAfterFocus=false; resume();} }
+                if(mixWithOthers){ if(player!=null)player.setVolume(1,1); return; }
+                if(change==AudioManager.AUDIOFOCUS_GAIN) { focusHeld=true; if(player!=null)player.setVolume(1,1); if(resumeAfterFocus){resumeAfterFocus=false; resume();} }
                 else if(change==AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK) { if(player!=null)player.setVolume(.2f,.2f); }
-                else { boolean wasPlaying=playing(); pause(); resumeAfterFocus=change==AudioManager.AUDIOFOCUS_LOSS_TRANSIENT && wasPlaying; }
+                else { focusHeld=false; boolean wasPlaying=playing(); pause(); resumeAfterFocus=change==AudioManager.AUDIOFOCUS_LOSS_TRANSIENT && wasPlaying; }
             },main);
         if(Build.VERSION.SDK_INT>=21){
         session=new MediaSession(this,"EchoMusic");
+        session.setFlags(MediaSession.FLAG_HANDLES_MEDIA_BUTTONS|MediaSession.FLAG_HANDLES_TRANSPORT_CONTROLS);
+        session.setSessionActivity(openActivity());
         session.setCallback(new MediaSession.Callback() {
             @Override public void onPlay(){resume();}
             @Override public void onPause(){pause();}
@@ -69,18 +76,96 @@ public class PlaybackService extends Service {
             statusLyrics=new StatusLyrics(this,repository);
         }
         publish();if(getSharedPreferences("echo",0).getBoolean("remote_enabled_v1",false))setRemoteEnabled(true);
+        restoreSavedPlayback();
     }
+
+    private PendingIntent openActivity(){
+        return PendingIntent.getActivity(this,0,new Intent(this,MainActivity.class),PendingIntent.FLAG_IMMUTABLE|PendingIntent.FLAG_UPDATE_CURRENT);
+    }
+
+    /** 后台持续播放是否开启（手机、平板有效，电视版保持原行为）。 */
+    public boolean backgroundPlayback(){return mixWithOthers;}
+
+    /** 设置页切换开关后立即生效，无需重启播放。 */
+    public void applyBackgroundPlayback(){
+        boolean enabled=!BuildConfig.TV&&PlaybackPreferences.background(this);
+        if(enabled==mixWithOthers){publish();return;}
+        mixWithOthers=enabled;
+        if(enabled){
+            // 放弃已持有的焦点，避免抖音等应用因本应用占用焦点而无法正常发声。
+            if(focusHeld){focusHeld=false;focus.abandon();}
+            if(player!=null)player.setVolume(1,1);
+        }else if(prepared&&wanted&&player!=null){
+            acquireFocus();
+        }
+        publish();
+    }
+
+    /** 申请独占音频焦点；后台持续播放模式下直接放行，因此不会被其他应用打断。 */
+    private boolean acquireFocus(){
+        if(mixWithOthers){
+            if(focusHeld){focusHeld=false;focus.abandon();}
+            if(player!=null)player.setVolume(1,1);
+            return true;
+        }
+        if(focusHeld)return true;
+        int result=focus.request();
+        focusHeld=result==AudioManager.AUDIOFOCUS_REQUEST_GRANTED;
+        if(!focusHeld&&player!=null)player.setVolume(1,1);
+        return focusHeld;
+    }
+    private void releaseFocus(){
+        if(!focusHeld)return;
+        focusHeld=false;
+        focus.abandon();
+    }
+
+    /** 记录是否处于播放状态与进度，进程被系统回收后可原地恢复。 */
+    private void rememberPlayback(boolean playing){
+        SharedPreferences.Editor editor=getSharedPreferences("echo",0).edit()
+            .putBoolean(RESUME_PLAYING,playing).putLong(RESUME_SAVED_AT,System.currentTimeMillis());
+        if(playing)editor.putInt(RESUME_POSITION,position());else editor.remove(RESUME_POSITION);
+        editor.apply();
+    }
+    private boolean restorePending(){return getSharedPreferences("echo",0).getBoolean(RESUME_PLAYING,false);}
+    private void restoreSavedPlayback(){
+        if(BuildConfig.TV||!mixWithOthers||!restorePending()||current()==null)return;
+        SharedPreferences preferences=getSharedPreferences("echo",0);
+        // 系统重建服务通常在几秒内完成；超过 15 分钟视为用户已放弃那次播放，避免半夜自动响起。
+        if(System.currentTimeMillis()-preferences.getLong(RESUME_SAVED_AT,0)>15*60*1000L)return;
+        int at=Math.max(0,preferences.getInt(RESUME_POSITION,0));
+        main.post(()->{
+            if(prepared||loading||current()==null)return;
+            switchPosition=at;switchPaused=false;
+            load();
+        });
+    }
+    /** 每 15 秒记录一次进度，播放进程被系统清理后可以从原位置续播。 */
+    private final Runnable savePositionTick=new Runnable(){
+        public void run(){
+            main.removeCallbacks(this);
+            if(playing())rememberPlayback(true);
+            if(wanted||loading)main.postDelayed(this,15000);
+        }
+    };
     private final BroadcastReceiver noisy=new BroadcastReceiver(){public void onReceive(Context c,Intent i){pause();}};
     @android.annotation.TargetApi(21)
     private AudioAttributes attributes(){return new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build();}
     @Override public int onStartCommand(Intent i,int flags,int id) {
+        startedExplicitly=true;
         // A foreground start must publish its notification before resolving network audio.
         foreground();
         if(i!=null) {
             String a=i.getAction();
             if(TOGGLE.equals(a))toggle(); else if(NEXT.equals(a))next(); else if(PREVIOUS.equals(a))previous(); else if(STOP.equals(a))stopPlayback();
         }
-        return START_NOT_STICKY;
+        // 后台持续播放开启时，服务被系统回收后自动重建并续播，避免"锁屏/切后台后音乐消失"。
+        return mixWithOthers&&(restorePending()||wanted||loading)?START_STICKY:START_NOT_STICKY;
+    }
+    @Override public void onTaskRemoved(Intent root){
+        rememberPlayback(playing()||loading);
+        if(playing()||loading||remote!=null)foreground();else stopPlayback();
+        super.onTaskRemoved(root);
     }
     private long sleepDeadline;
     private final Runnable sleepStop=()->{sleepDeadline=0;stopPlayback();};
@@ -107,7 +192,7 @@ public class PlaybackService extends Service {
     public void remoteMode(String mode){switch(mode){case "list":repeat=0;break;case "single":repeat=1;break;case "random":repeat=2;break;case "sequential":repeat=3;break;default:throw new IllegalArgumentException();}publish();}
     public float remoteRate(){return rate;}
     public void remoteRate(float value){if(Build.VERSION.SDK_INT<23&&value!=1)throw new IllegalArgumentException("此系统不支持变速");rate=value;if(Build.VERSION.SDK_INT>=23&&prepared&&player!=null){boolean running=playing();player.setPlaybackParams(player.getPlaybackParams().setSpeed(rate));if(!running)player.pause();}publish();}
-    private void detach(){if(remote!=null)foreground();else finishForeground(2);}
+    private void detach(){if(remote!=null||prepared||loading)foreground();else finishForeground(2);}
     public List<Song> queue(){return queue.snapshot();}
     public Song current(){return queue.current();}
     public boolean playing(){return prepared && player!=null && player.isPlaying();}
@@ -129,13 +214,22 @@ public class PlaybackService extends Service {
     public void insertNext(Song song){queue.insertNext(song);saveQueue();publish();}
     private void saveQueue(){repository.save("queue",queue.snapshot());getSharedPreferences("echo",0).edit().putInt("queue_index",queue.index()).apply();}
     public boolean moveQueue(int from,int to,long revision){if(!queue.move(from,to,revision))return false;saveQueue();publish();return true;}
-    public boolean removeQueue(int at,long revision){if(!queue.matches(revision)||at<0||at>=queue.size())return false;boolean running=playing()||loading;boolean selected=queue.remove(at,revision);saveQueue();if(selected){++generation;wanted=false;loading=false;releasePlayer();focus.abandon();if(running&&current()!=null)load();else{publish();detach();}}else publish();return true;}
+    public boolean removeQueue(int at,long revision){if(!queue.matches(revision)||at<0||at>=queue.size())return false;boolean running=playing()||loading;boolean selected=queue.remove(at,revision);saveQueue();if(selected){++generation;wanted=false;loading=false;releasePlayer();releaseFocus();if(running&&current()!=null)load();else{publish();detach();}}else publish();return true;}
     public boolean clearQueue(long revision){if(!queue.matches(revision))return false;queue.clear();saveQueue();stopPlayback();return true;}
+    /** 把播放服务变成"已启动"服务：界面销毁、从最近任务划掉都不再影响播放。 */
+    private void keepAlive(){
+        if(startedExplicitly)return;
+        startedExplicitly=true;
+        try{
+            if(Build.VERSION.SDK_INT>=26)startForegroundService(new Intent(this,PlaybackService.class));
+            else startService(new Intent(this,PlaybackService.class));
+        }catch(RuntimeException restricted){/* 后台限制下无法再次启动，此时服务本身已在运行 */}
+    }
     private void load() {
         Song song=current(); if(song==null)return;
         final boolean accompaniment=audioMode.equals("accompaniment");final int restorePosition=switchPosition;final boolean paused=switchPaused;switchPosition=0;switchPaused=false;int ticket=++generation; releasePlayer();loading=true;wanted=!paused;error="";
         getSharedPreferences("echo",0).edit().putInt("queue_index",queue.index()).apply();
-        foreground();publish();
+        keepAlive();foreground();publish();
         io.execute(()->{
             try {
                 CloudLibrary.Session<AuthStore.Scope> account=cache==null||song.local()||accompaniment?null:repository.cloud.session();
@@ -201,12 +295,14 @@ public class PlaybackService extends Service {
 
     void cacheCurrent(){if(playing()&&cacheRequest!=null)cacheRequest.run();}
     boolean hasPreparedAudio(){return prepared;}
-    private void fail(String message){loading=false;wanted=false;error=message==null?"播放失败":message;releasePlayer();focus.abandon();publish();if(remote!=null)foreground();else finishForeground(1);}
+    private void fail(String message){loading=false;wanted=false;error=message==null?"播放失败":message;releasePlayer();releaseFocus();rememberPlayback(false);publish();if(remote!=null)foreground();else finishForeground(1);}
     public void toggle(){if(playing() || (loading&&wanted))pause();else resume();}
     public void resume(){
         wanted=true;
         if(player==null){if(current()!=null)load();return;}
-        if(prepared){if(focus.request()!=AudioManager.AUDIOFOCUS_REQUEST_GRANTED){wanted=false;error="未获得音频焦点，请稍后重试";publish();return;}player.start();
+        if(prepared){if(!acquireFocus()){wanted=false;error="未获得音频焦点，请稍后重试";publish();return;}player.start();
+            rememberPlayback(true);
+            main.removeCallbacks(savePositionTick);main.postDelayed(savePositionTick,15000);
             cacheCurrent();
             if(BuildConfig.MGV2000&&reanchorOnResume){
                 reanchorOnResume=false;
@@ -217,7 +313,7 @@ public class PlaybackService extends Service {
             foreground();}
         publish();
     }
-    public void pause(){wanted=false;resumeAfterFocus=false;if(playing())player.pause();focus.abandon();publish();if(!loading)detach();}
+    public void pause(){wanted=false;resumeAfterFocus=false;if(playing())player.pause();releaseFocus();main.removeCallbacks(savePositionTick);rememberPlayback(false);publish();if(!loading)detach();}
     private boolean seeking,reanchorOnResume;
     private int activeSeek=-1,queuedSeek=-1;
     private long seekRevision;
@@ -275,7 +371,7 @@ public class PlaybackService extends Service {
     public void next(){if(queue.size()==0)return;int index=queue.index();queue.select(repeat==2&&queue.size()>1?(index+1+new Random().nextInt(queue.size()-1))%queue.size():(index+1)%queue.size());load();}
     public void previous(){if(position()>3000){seek(0);return;}if(queue.size()>0){queue.select((queue.index()-1+queue.size())%queue.size());load();}}
     private void releasePlayer(){cacheRequest=null;notificationLyric="";prepared=false;seeking=false;reanchorOnResume=false;activeSeek=-1;queuedSeek=-1;if(player!=null){player.release();player=null;}}
-    public void stopPlayback(){++generation;wanted=false;loading=false;releasePlayer();focus.abandon();publish();if(remote!=null)foreground();else{finishForeground(1);stopSelf();}}
+    public void stopPlayback(){++generation;wanted=false;loading=false;main.removeCallbacks(savePositionTick);releasePlayer();releaseFocus();rememberPlayback(false);publish();if(remote!=null)foreground();else{finishForeground(1);stopSelf();}}
     private void publish(){
         Song s=current();
         if(notificationArt!=null)loadNotificationCover(s);
@@ -346,6 +442,6 @@ public class PlaybackService extends Service {
         return builder.build();
     }
     private void finishForeground(int mode){if(Build.VERSION.SDK_INT>=24)super.stopForeground(mode);else super.stopForeground((mode&1)!=0);}
-    private void foreground(){startForeground(1,notification());}
-    @Override public void onDestroy(){main.removeCallbacks(sleepStop);if(statusLyrics!=null)statusLyrics.close();if(notificationIo!=null)notificationIo.shutdownNow();if(remote!=null){remote.close();remote=null;}++generation;releasePlayer();focus.abandon();if(Build.VERSION.SDK_INT>=21&&session!=null)session.release();unregisterReceiver(noisy);io.shutdownNow();super.onDestroy();}
+    private void foreground(){try{startForeground(1,notification());}catch(RuntimeException restricted){((NotificationManager)getSystemService(NOTIFICATION_SERVICE)).notify(1,notification());}}
+    @Override public void onDestroy(){main.removeCallbacks(sleepStop);main.removeCallbacks(savePositionTick);if(playing()||loading)rememberPlayback(true);if(statusLyrics!=null)statusLyrics.close();if(notificationIo!=null)notificationIo.shutdownNow();if(remote!=null){remote.close();remote=null;}++generation;releasePlayer();releaseFocus();if(Build.VERSION.SDK_INT>=21&&session!=null)session.release();unregisterReceiver(noisy);io.shutdownNow();super.onDestroy();}
 }
